@@ -201,6 +201,21 @@
     // --- メインコンポーネント ---
     function App() {
       // 状態管理
+      const [pallets, setPallets] = useState(() => {
+        const saved = localStorage.getItem('pw_pallets_v2');
+        return saved ? JSON.parse(saved) : ALL_PALLETS;
+      });
+
+      const [workers, setWorkers] = useState(() => {
+        const saved = localStorage.getItem('pw_workers_v2');
+        return saved ? JSON.parse(saved) : WORKER_PRESETS;
+      });
+
+      const [colors, setColors] = useState(() => {
+        const saved = localStorage.getItem('pw_colors_v2');
+        return saved ? JSON.parse(saved) : COLOR_PRESETS;
+      });
+
       const [plates, setPlates] = useState(() => {
         const saved = localStorage.getItem('pw_plates_multi_v1');
         return saved ? JSON.parse(saved) : INITIAL_PLATES;
@@ -212,7 +227,16 @@
       });
 
       const [searchQuery, setSearchQuery] = useState('');
-      const [currentView, setCurrentView] = useState('MAP'); // 'MAP' | 'SEARCH'
+      const [currentView, setCurrentView] = useState(() => {
+        try {
+          const params = new URLSearchParams(window.location.search);
+          const v = params.get('view');
+          if (v && v.toUpperCase() === 'SETTINGS') return 'SETTINGS';
+          if (v && v.toUpperCase() === 'SEARCH') return 'SEARCH';
+          if (window.location.hash === '#settings') return 'SETTINGS';
+        } catch (e) {}
+        return 'MAP';
+      }); // 'MAP' | 'SEARCH' | 'SETTINGS'
       const [orderToCheckOut, setOrderToCheckOut] = useState(null); // 検索結果画面からの出庫用受注データ
       const [selectedPallet, setSelectedPallet] = useState(null);
       const [showActionModal, setShowActionModal] = useState(false);
@@ -235,6 +259,18 @@
 
       // LocalStorage同期
       useEffect(() => {
+        localStorage.setItem('pw_pallets_v2', JSON.stringify(pallets));
+      }, [pallets]);
+
+      useEffect(() => {
+        localStorage.setItem('pw_workers_v2', JSON.stringify(workers));
+      }, [workers]);
+
+      useEffect(() => {
+        localStorage.setItem('pw_colors_v2', JSON.stringify(colors));
+      }, [colors]);
+
+      useEffect(() => {
         localStorage.setItem('pw_plates_multi_v1', JSON.stringify(plates));
       }, [plates]);
 
@@ -252,7 +288,7 @@
       // パレットごとの版集約マップ
       const palletPlatesMap = useMemo(() => {
         const map = {};
-        ALL_PALLETS.forEach(p => { map[p.id] = []; });
+        pallets.forEach(p => { map[p.id] = []; });
         plates.forEach(pl => {
           if (pl.status === 'IN_STORAGE' && pl.currentPalletId) {
             if (!map[pl.currentPalletId]) map[pl.currentPalletId] = [];
@@ -260,7 +296,7 @@
           }
         });
         return map;
-      }, [plates]);
+      }, [plates, pallets]);
 
       // 使用中の版一覧
       const inUsePlates = useMemo(() => {
@@ -317,7 +353,7 @@
         const q = searchQuery.trim().toLowerCase();
         const set = new Set();
 
-        ALL_PALLETS.forEach(p => {
+        pallets.forEach(p => {
           if (p.id.toLowerCase().includes(q)) {
             set.add(p.id);
             return;
@@ -331,19 +367,33 @@
           if (hit) set.add(p.id);
         });
         return set;
-      }, [searchQuery, palletPlatesMap]);
+      }, [searchQuery, palletPlatesMap, pallets]);
 
       // 統計情報
       const stats = useMemo(() => {
         let occupied = 0;
-        ALL_PALLETS.forEach(p => {
+        pallets.forEach(p => {
           if (palletPlatesMap[p.id]?.length > 0) occupied++;
         });
-        const total = ALL_PALLETS.length;
+        const total = pallets.length;
         const empty = total - occupied;
         const inUseCount = inUsePlates.length;
         return { total, occupied, empty, inUseCount };
-      }, [palletPlatesMap, inUsePlates]);
+      }, [palletPlatesMap, inUsePlates, pallets]);
+
+      // 登録されているエリア一覧
+      const areas = useMemo(() => {
+        const set = new Set(pallets.map(p => p.area));
+        return Array.from(set).sort();
+      }, [pallets]);
+
+      const getAreaTheme = (area) => {
+        if (area === 'A') return { title: '上段：エリア A', dot: 'bg-blue-600', shadow: 'shadow-blue-500/30', text: 'text-blue-900', badge: 'bg-blue-50 text-blue-700 border-blue-200' };
+        if (area === 'B') return { title: '下段：エリア B', dot: 'bg-emerald-600', shadow: 'shadow-emerald-500/30', text: 'text-emerald-900', badge: 'bg-emerald-50 text-emerald-700 border-emerald-200' };
+        if (area === 'C') return { title: `増設：エリア ${area}`, dot: 'bg-purple-600', shadow: 'shadow-purple-500/30', text: 'text-purple-900', badge: 'bg-purple-50 text-purple-700 border-purple-200' };
+        if (area === 'D') return { title: `増設：エリア ${area}`, dot: 'bg-amber-600', shadow: 'shadow-amber-500/30', text: 'text-amber-900', badge: 'bg-amber-50 text-amber-700 border-amber-200' };
+        return { title: `エリア ${area}`, dot: 'bg-indigo-600', shadow: 'shadow-indigo-500/30', text: 'text-indigo-900', badge: 'bg-indigo-50 text-indigo-700 border-indigo-200' };
+      };
 
       // 検索実行（Enterまたは検索ボタン押下時 ➔ 検索結果ページへ遷移）
       const handleSearchSubmit = (e) => {
@@ -643,6 +693,20 @@
                   <span class="hidden sm:inline">履歴</span>
                 </button>
 
+                {/* ⚙️ 設定ボタン */}
+                <button
+                  onClick={() => setCurrentView(currentView === 'SETTINGS' ? 'MAP' : 'SETTINGS')}
+                  className={`px-3 py-2 rounded-lg border text-xs font-bold flex items-center gap-1.5 transition-all shadow-sm ${
+                    currentView === 'SETTINGS'
+                      ? 'bg-slate-900 text-white border-slate-900 ring-2 ring-blue-500 shadow-md'
+                      : 'bg-white hover:bg-slate-50 border-slate-300 text-slate-700 hover:text-slate-900'
+                  }`}
+                  title="パレット追加・担当者追加・カラー追加など各種システム設定"
+                >
+                  <i data-lucide="settings" className={`w-4 h-4 ${currentView === 'SETTINGS' ? 'text-blue-400 rotate-45' : 'text-slate-600'} transition-transform`}></i>
+                  <span>設定</span>
+                </button>
+
                 {/* データリセット */}
                 <button
                   onClick={handleResetData}
@@ -837,95 +901,70 @@
                   </div>
                 </div>
 
-                {/* 2D グリッドコンテナ（中央に通路なしの縦直列） */}
+                {/* 2D グリッドコンテナ（中央に通路なしの縦直列・動的エリア描画） */}
                 <div class="flex flex-col gap-8 bg-white border border-slate-200 rounded-2xl p-4 sm:p-6 shadow-sm">
-                  
-                  {/* 🔵 上段：エリアA (縦11行 × 横2列 = 22マス) */}
-                  <div>
-                    <div class="flex items-center justify-between mb-3 border-b border-slate-200 pb-2">
-                      <div class="flex items-center gap-2">
-                        <span class="w-3.5 h-3.5 rounded-full bg-blue-600 shadow-sm shadow-blue-500/30"></span>
-                        <h2 class="font-bold text-sm sm:text-base text-blue-900">
-                          【上段：エリア A】
-                        </h2>
-                        <span class="text-xs text-slate-500">
-                          縦11行 × 横2列（A-01-1 〜 A-11-2 / 計22マス）
-                        </span>
-                      </div>
-                      <span class="text-xs font-mono text-blue-700 font-bold bg-blue-50 px-2.5 py-1 rounded-md border border-blue-200">
-                        エリアA 保管: {ALL_PALLETS.filter(p => p.area === 'A' && palletPlatesMap[p.id]?.length > 0).length} / 22
-                      </span>
-                    </div>
+                  {areas.map((areaCode, areaIdx) => {
+                    const theme = getAreaTheme(areaCode);
+                    const areaPallets = pallets
+                      .filter(p => p.area === areaCode)
+                      .sort((a, b) => (a.row || 0) - (b.row || 0) || (a.col || 0) - (b.col || 0));
+                    const occupiedInArea = areaPallets.filter(p => palletPlatesMap[p.id]?.length > 0).length;
 
-                    {/* 列ヘッダー (1列目 / 2列目) */}
-                    <div class="grid grid-cols-2 gap-3 mb-2 px-1 text-center font-mono text-xs text-slate-500 font-semibold">
-                      <div>1列目 (左列)</div>
-                      <div>2列目 (右列)</div>
-                    </div>
+                    return (
+                      <React.Fragment key={areaCode}>
+                        {areaIdx > 0 && (
+                          /* 境界ディバイダー */
+                          <div class="relative py-2 flex items-center justify-center">
+                            <div class="absolute inset-0 flex items-center">
+                              <div class="w-full border-t-2 border-dashed border-slate-300"></div>
+                            </div>
+                            <span class="relative bg-slate-100 px-4 py-1 text-xs text-slate-600 rounded-full border border-slate-300 font-mono font-medium flex items-center gap-1.5 shadow-sm">
+                              <i data-lucide="arrow-down" class="w-3.5 h-3.5 text-slate-500"></i>
+                              倉庫内フロア境界（エリア{areas[areaIdx - 1]} ➔ エリア{areaCode}）
+                              <i data-lucide="arrow-down" class="w-3.5 h-3.5 text-slate-500"></i>
+                            </span>
+                          </div>
+                        )}
 
-                    {/* エリアA グリッド */}
-                    <div class="grid grid-cols-2 gap-3">
-                      {ALL_PALLETS.filter(p => p.area === 'A').map(pallet => (
-                        <PalletCell
-                          key={pallet.id}
-                          pallet={pallet}
-                          plates={palletPlatesMap[pallet.id] || []}
-                          isMatched={matchedPalletIds.has(pallet.id)}
-                          onClick={() => handlePalletClick(pallet)}
-                        />
-                      ))}
-                    </div>
-                  </div>
+                        <div>
+                          {/* エリアヘッダー */}
+                          <div class="flex items-center justify-between mb-3 border-b border-slate-200 pb-2">
+                            <div class="flex items-center gap-2">
+                              <span className={`w-3.5 h-3.5 rounded-full ${theme.dot} ${theme.shadow}`}></span>
+                              <h2 className={`font-bold text-sm sm:text-base ${theme.text}`}>
+                                【{theme.title}】
+                              </h2>
+                              <span class="text-xs text-slate-500">
+                                計 {areaPallets.length} マス
+                              </span>
+                            </div>
+                            <span className={`text-xs font-mono font-bold px-2.5 py-1 rounded-md border ${theme.badge}`}>
+                              エリア{areaCode} 保管: {occupiedInArea} / {areaPallets.length}
+                            </span>
+                          </div>
 
-                  {/* 境界ディバイダー */}
-                  <div class="relative py-2 flex items-center justify-center">
-                    <div class="absolute inset-0 flex items-center">
-                      <div class="w-full border-t-2 border-dashed border-slate-300"></div>
-                    </div>
-                    <span class="relative bg-slate-100 px-4 py-1 text-xs text-slate-600 rounded-full border border-slate-300 font-mono font-medium flex items-center gap-1.5 shadow-sm">
-                      <i data-lucide="arrow-down" class="w-3.5 h-3.5 text-slate-500"></i>
-                      倉庫内フロア境界（エリアA ➔ エリアB）
-                      <i data-lucide="arrow-down" class="w-3.5 h-3.5 text-slate-500"></i>
-                    </span>
-                  </div>
+                          {/* 列ヘッダー (1列目 / 2列目) */}
+                          <div class="grid grid-cols-2 gap-3 mb-2 px-1 text-center font-mono text-xs text-slate-500 font-semibold">
+                            <div>1列目 (左列)</div>
+                            <div>2列目 (右列)</div>
+                          </div>
 
-                  {/* 🟢 下段：エリアB (縦12行 × 横2列 = 24マス) */}
-                  <div>
-                    <div class="flex items-center justify-between mb-3 border-b border-slate-200 pb-2">
-                      <div class="flex items-center gap-2">
-                        <span class="w-3.5 h-3.5 rounded-full bg-emerald-600 shadow-sm shadow-emerald-500/30"></span>
-                        <h2 class="font-bold text-sm sm:text-base text-emerald-900">
-                          【下段：エリア B】
-                        </h2>
-                        <span class="text-xs text-slate-500">
-                          縦12行 × 横2列（B-01-1 〜 B-12-2 / 計24マス）
-                        </span>
-                      </div>
-                      <span class="text-xs font-mono text-emerald-700 font-bold bg-emerald-50 px-2.5 py-1 rounded-md border border-emerald-200">
-                        エリアB 保管: {ALL_PALLETS.filter(p => p.area === 'B' && palletPlatesMap[p.id]?.length > 0).length} / 24
-                      </span>
-                    </div>
-
-                    {/* 列ヘッダー */}
-                    <div class="grid grid-cols-2 gap-3 mb-2 px-1 text-center font-mono text-xs text-slate-500 font-semibold">
-                      <div>1列目 (左列)</div>
-                      <div>2列目 (右列)</div>
-                    </div>
-
-                    {/* エリアB グリッド */}
-                    <div class="grid grid-cols-2 gap-3">
-                      {ALL_PALLETS.filter(p => p.area === 'B').map(pallet => (
-                        <PalletCell
-                          key={pallet.id}
-                          pallet={pallet}
-                          plates={palletPlatesMap[pallet.id] || []}
-                          isMatched={matchedPalletIds.has(pallet.id)}
-                          onClick={() => handlePalletClick(pallet)}
-                        />
-                      ))}
-                    </div>
-                  </div>
-
+                          {/* エリア内パレットグリッド */}
+                          <div class="grid grid-cols-2 gap-3">
+                            {areaPallets.map(pallet => (
+                              <PalletCell
+                                key={pallet.id}
+                                pallet={pallet}
+                                plates={palletPlatesMap[pallet.id] || []}
+                                isMatched={matchedPalletIds.has(pallet.id)}
+                                onClick={() => handlePalletClick(pallet)}
+                              />
+                            ))}
+                          </div>
+                        </div>
+                      </React.Fragment>
+                    );
+                  })}
                 </div>
               </div>
 
@@ -1037,6 +1076,28 @@
               </div>
 
             </main>
+          ) : currentView === 'SETTINGS' ? (
+            /* --- ③ 設定ページ (パレット追加・担当者追加・カラー追加・データ管理) --- */
+            <SettingsPage
+              pallets={pallets}
+              setPallets={setPallets}
+              workers={workers}
+              setWorkers={setWorkers}
+              colors={colors}
+              setColors={setColors}
+              plates={plates}
+              setPlates={setPlates}
+              logs={logs}
+              setLogs={setLogs}
+              palletPlatesMap={palletPlatesMap}
+              onBackToMap={() => setCurrentView('MAP')}
+              showToast={showToast}
+              defaultPallets={ALL_PALLETS}
+              defaultWorkers={WORKER_PRESETS}
+              defaultColors={COLOR_PRESETS}
+              initialPlates={INITIAL_PLATES}
+              initialLogs={INITIAL_LOGS}
+            />
           ) : (
             /* --- ② 検索結果一覧ビュー (受注詳細・状態一覧・大型入出庫ボタン) --- */
             <SearchResultsView
@@ -1061,6 +1122,8 @@
               pallet={selectedPallet}
               storedPlates={palletPlatesMap[selectedPallet.id] || []}
               inUsePlates={inUsePlates}
+              colors={colors}
+              workers={workers}
               onClose={() => {
                 setShowActionModal(false);
                 setSelectedPallet(null);
@@ -1165,8 +1228,9 @@
             <QuickReturnPalletModal
               orderNo={quickReturnOrderNo}
               inUsePlates={inUsePlates.filter(p => p.orderNo === quickReturnOrderNo)}
-              allPallets={ALL_PALLETS}
+              allPallets={pallets}
               palletPlatesMap={palletPlatesMap}
+              workers={workers}
               onClose={() => {
                 setShowQuickReturnModal(false);
                 setQuickReturnOrderNo(null);
@@ -1179,6 +1243,7 @@
           {orderToCheckOut && (
             <OrderCheckOutModal
               orderGroup={orderToCheckOut}
+              workers={workers}
               onClose={() => setOrderToCheckOut(null)}
               onConfirm={handleExecuteOrderCheckOut}
             />
@@ -1195,8 +1260,10 @@
           {/* ⑤ ダイレクト入庫モーダル */}
           {showDirectCheckInModal && (
             <DirectCheckInModal
-              allPallets={ALL_PALLETS}
+              allPallets={pallets}
               palletPlatesMap={palletPlatesMap}
+              colors={colors}
+              workers={workers}
               onClose={() => setShowDirectCheckInModal(false)}
               onConfirm={handleExecuteDirectCheckIn}
             />
@@ -1206,6 +1273,7 @@
           {showDirectCheckOutModal && (
             <DirectCheckOutModal
               plates={plates}
+              workers={workers}
               onClose={() => setShowDirectCheckOutModal(false)}
               onConfirm={handleExecuteDirectCheckOut}
             />
@@ -1216,6 +1284,7 @@
             <DirectInUseModal
               inUsePlates={inUsePlates}
               inUseByOrder={inUseByOrder}
+              workers={workers}
               onClose={() => setShowDirectInUseModal(false)}
               onQuickReturn={(orderNo) => {
                 setShowDirectInUseModal(false);
@@ -1233,8 +1302,9 @@
           {showDirectReturnModal && (
             <DirectReturnModal
               inUsePlates={inUsePlates}
-              allPallets={ALL_PALLETS}
+              allPallets={pallets}
               palletPlatesMap={palletPlatesMap}
+              workers={workers}
               onClose={() => setShowDirectReturnModal(false)}
               onConfirm={handleExecuteDirectReturn}
             />
@@ -1365,7 +1435,7 @@
     }
 
     // --- パレットアクションモーダル（複数保管対応: 出庫 / 返却入庫 / 新規入庫） ---
-    function PalletActionModal({ pallet, storedPlates, inUsePlates, onClose, onCheckOut, onCheckInReturn, onRegisterNew }) {
+    function PalletActionModal({ pallet, storedPlates, inUsePlates, colors = COLOR_PRESETS, workers = WORKER_PRESETS, onClose, onCheckOut, onCheckInReturn, onRegisterNew }) {
       const isOccupied = storedPlates.length > 0;
       
       // タブ切り替え: 'checkout' (出庫) | 'return' (返却・追加入庫) | 'new' (新規登録入庫)
@@ -1383,7 +1453,7 @@
       const [selectedColors, setSelectedColors] = useState(['C', 'M', 'Y', 'K']);
 
       // 作業者名入力（必須）
-      const [workerName, setWorkerName] = useState(WORKER_PRESETS[0]);
+      const [workerName, setWorkerName] = useState(workers[0] || WORKER_PRESETS[0]);
       const [customWorker, setCustomWorker] = useState('');
       const [isCustomWorker, setIsCustomWorker] = useState(false);
 
@@ -1461,7 +1531,7 @@
 
         const now = new Date().toISOString();
         const createdPlates = selectedColors.map(colorCode => {
-          const preset = COLOR_PRESETS.find(c => c.code === colorCode) || { bg: '#8B5CF6' };
+          const preset = (colors || COLOR_PRESETS).find(c => c.code === colorCode) || { bg: '#8B5CF6' };
           return {
             plateId: `PLT-${newOrderNo.trim()}-${colorCode}-${Date.now().toString().slice(-4)}`,
             orderNo: newOrderNo.trim(),
@@ -1680,6 +1750,7 @@
                         setCustomWorker={setCustomWorker}
                         isCustomWorker={isCustomWorker}
                         setIsCustomWorker={setIsCustomWorker}
+                        workers={workers}
                       />
 
                       {/* 出庫実行ボタン */}
@@ -1781,6 +1852,7 @@
                     setCustomWorker={setCustomWorker}
                     isCustomWorker={isCustomWorker}
                     setIsCustomWorker={setIsCustomWorker}
+                    workers={workers}
                   />
 
                   <button
@@ -1841,7 +1913,7 @@
                       版の色を選択 <span class="text-red-500">*</span>:
                     </label>
                     <div class="grid grid-cols-4 gap-2">
-                      {COLOR_PRESETS.map(preset => {
+                      {(colors || COLOR_PRESETS).map(preset => {
                         const isSelected = selectedColors.includes(preset.code);
                         return (
                           <button
@@ -1876,6 +1948,7 @@
                     setCustomWorker={setCustomWorker}
                     isCustomWorker={isCustomWorker}
                     setIsCustomWorker={setIsCustomWorker}
+                    workers={workers}
                   />
 
                   <button
@@ -1895,7 +1968,7 @@
     }
 
     // --- 作業者名選択・入力コンポーネント ---
-    function WorkerSelector({ workerName, setWorkerName, customWorker, setCustomWorker, isCustomWorker, setIsCustomWorker }) {
+    function WorkerSelector({ workerName, setWorkerName, customWorker, setCustomWorker, isCustomWorker, setIsCustomWorker, workers = WORKER_PRESETS }) {
       return (
         <div class="bg-slate-50 p-3.5 rounded-xl border border-slate-200 space-y-2.5">
           <label class="text-xs font-bold text-slate-800 flex items-center gap-1.5">
@@ -1905,7 +1978,7 @@
 
           {/* プリセットチップ */}
           <div class="flex items-center gap-1.5 flex-wrap">
-            {WORKER_PRESETS.map(name => (
+            {(workers || WORKER_PRESETS).map(name => (
               <button
                 key={name}
                 type="button"
@@ -1951,9 +2024,9 @@
     }
 
     // --- クイック返却先パレット選択モーダル（空きパレット＋保管中パレットへの合積みも可能） ---
-    function QuickReturnPalletModal({ orderNo, inUsePlates, allPallets, palletPlatesMap, onClose, onConfirm }) {
+    function QuickReturnPalletModal({ orderNo, inUsePlates, allPallets, palletPlatesMap, workers = WORKER_PRESETS, onClose, onConfirm }) {
       const [targetPalletId, setTargetPalletId] = useState('');
-      const [workerName, setWorkerName] = useState(inUsePlates[0]?.currentWorker || WORKER_PRESETS[0]);
+      const [workerName, setWorkerName] = useState(inUsePlates[0]?.currentWorker || (workers && workers[0]) || WORKER_PRESETS[0]);
 
       return (
         <div class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-fadeIn">
@@ -2288,11 +2361,11 @@
     }
 
     // --- 検索結果画面用 出庫モーダルコンポーネント ---
-    function OrderCheckOutModal({ orderGroup, onClose, onConfirm }) {
+    function OrderCheckOutModal({ orderGroup, workers = WORKER_PRESETS, onClose, onConfirm }) {
       const storedPlates = orderGroup.plates.filter(p => p.status === 'IN_STORAGE');
       const [selectedIds, setSelectedIds] = useState(() => storedPlates.map(p => p.plateId));
 
-      const [workerName, setWorkerName] = useState(WORKER_PRESETS[0]);
+      const [workerName, setWorkerName] = useState((workers && workers[0]) || WORKER_PRESETS[0]);
       const [customWorker, setCustomWorker] = useState('');
       const [isCustomWorker, setIsCustomWorker] = useState(false);
 
@@ -2378,6 +2451,7 @@
               setCustomWorker={setCustomWorker}
               isCustomWorker={isCustomWorker}
               setIsCustomWorker={setIsCustomWorker}
+              workers={workers}
             />
 
             {/* 出庫実行ボタン（大型） */}
@@ -2403,13 +2477,13 @@
     }
 
     // --- ① ダイレクト入庫モーダル（新規版の入庫・保管登録） ---
-    function DirectCheckInModal({ allPallets, palletPlatesMap, onClose, onConfirm }) {
+    function DirectCheckInModal({ allPallets, palletPlatesMap, colors = COLOR_PRESETS, workers = WORKER_PRESETS, onClose, onConfirm }) {
       const [orderNo, setOrderNo] = useState('');
       const [branchNo, setBranchNo] = useState('01');
       const [selectedColors, setSelectedColors] = useState(['C', 'M', 'Y', 'K']);
       const [targetPalletId, setTargetPalletId] = useState('');
 
-      const [workerName, setWorkerName] = useState(WORKER_PRESETS[0]);
+      const [workerName, setWorkerName] = useState((workers && workers[0]) || WORKER_PRESETS[0]);
       const [customWorker, setCustomWorker] = useState('');
       const [isCustomWorker, setIsCustomWorker] = useState(false);
 
@@ -2427,7 +2501,7 @@
 
         const now = new Date().toISOString();
         const createdPlates = selectedColors.map(colorCode => {
-          const preset = COLOR_PRESETS.find(c => c.code === colorCode) || { bg: '#8B5CF6' };
+          const preset = (colors || COLOR_PRESETS).find(c => c.code === colorCode) || { bg: '#8B5CF6' };
           return {
             plateId: `PLT-${orderNo.trim()}-${colorCode}-${Date.now().toString().slice(-4)}`,
             orderNo: orderNo.trim(),
@@ -2493,7 +2567,7 @@
                 版の色を選択 <span class="text-red-500">*</span>:
               </label>
               <div class="grid grid-cols-4 gap-2">
-                {COLOR_PRESETS.map(preset => {
+                {(colors || COLOR_PRESETS).map(preset => {
                   const isSelected = selectedColors.includes(preset.code);
                   return (
                     <button
@@ -2561,6 +2635,7 @@
               setCustomWorker={setCustomWorker}
               isCustomWorker={isCustomWorker}
               setIsCustomWorker={setIsCustomWorker}
+              workers={workers}
             />
 
             {/* アクションボタン */}
@@ -2587,12 +2662,12 @@
     }
 
     // --- ② ダイレクト出庫モーダル（保管中の版を選んで出庫） ---
-    function DirectCheckOutModal({ plates, onClose, onConfirm }) {
+    function DirectCheckOutModal({ plates, workers = WORKER_PRESETS, onClose, onConfirm }) {
       const storedPlates = plates.filter(p => p.status === 'IN_STORAGE');
       const [filterQuery, setFilterQuery] = useState('');
       const [selectedIds, setSelectedIds] = useState([]);
 
-      const [workerName, setWorkerName] = useState(WORKER_PRESETS[0]);
+      const [workerName, setWorkerName] = useState((workers && workers[0]) || WORKER_PRESETS[0]);
       const [customWorker, setCustomWorker] = useState('');
       const [isCustomWorker, setIsCustomWorker] = useState(false);
 
@@ -2737,6 +2812,7 @@
               setCustomWorker={setCustomWorker}
               isCustomWorker={isCustomWorker}
               setIsCustomWorker={setIsCustomWorker}
+              workers={workers}
             />
 
             {/* アクションボタン */}
@@ -2872,11 +2948,11 @@
     }
 
     // --- ④ ダイレクト返却モーダル（使用中の版を選んでパレット返却） ---
-    function DirectReturnModal({ inUsePlates, allPallets, palletPlatesMap, onClose, onConfirm }) {
+    function DirectReturnModal({ inUsePlates, allPallets, palletPlatesMap, workers = WORKER_PRESETS, onClose, onConfirm }) {
       const [selectedIds, setSelectedIds] = useState(() => inUsePlates.map(p => p.plateId));
       const [targetPalletId, setTargetPalletId] = useState('');
 
-      const [workerName, setWorkerName] = useState(inUsePlates[0]?.currentWorker || WORKER_PRESETS[0]);
+      const [workerName, setWorkerName] = useState(inUsePlates[0]?.currentWorker || (workers && workers[0]) || WORKER_PRESETS[0]);
       const [customWorker, setCustomWorker] = useState('');
       const [isCustomWorker, setIsCustomWorker] = useState(false);
 
@@ -3010,6 +3086,7 @@
                   setCustomWorker={setCustomWorker}
                   isCustomWorker={isCustomWorker}
                   setIsCustomWorker={setIsCustomWorker}
+                  workers={workers}
                 />
 
                 {/* アクションボタン */}
@@ -3156,6 +3233,965 @@
               )}
             </div>
           </div>
+        </div>
+      );
+    }
+
+    // --- ⚙️ システム設定ページコンポーネント (パレット追加・担当者追加・カラー追加・データ管理) ---
+    function SettingsPage({
+      pallets, setPallets,
+      workers, setWorkers,
+      colors, setColors,
+      plates, setPlates,
+      logs, setLogs,
+      palletPlatesMap,
+      onBackToMap,
+      showToast,
+      defaultPallets,
+      defaultWorkers,
+      defaultColors,
+      initialPlates,
+      initialLogs
+    }) {
+      const [activeTab, setActiveTab] = useState(() => {
+        try {
+          const params = new URLSearchParams(window.location.search);
+          const t = params.get('tab');
+          if (t && ['workers', 'colors', 'pallets', 'data'].includes(t.toLowerCase())) {
+            return t.toLowerCase();
+          }
+        } catch (e) {}
+        return 'workers';
+      }); // 'workers' | 'colors' | 'pallets' | 'data'
+
+      // ================= 1. 担当者設定ステート =================
+      const [newWorkerName, setNewWorkerName] = useState('');
+
+      const handleAddWorker = (e) => {
+        if (e) e.preventDefault();
+        const trimmed = newWorkerName.trim();
+        if (!trimmed) return alert('担当者名を入力してください。');
+        if (workers.includes(trimmed)) return alert('その担当者名は既に登録されています。');
+        setWorkers(prev => [...prev, trimmed]);
+        setNewWorkerName('');
+        showToast(`👨‍🏭 担当者「${trimmed}」を追加登録しました！`);
+      };
+
+      const handleDeleteWorker = (targetName) => {
+        if (workers.length <= 1) return alert('担当者をすべて削除することはできません（最低1名必要）。');
+        if (confirm(`担当者「${targetName}」をリストから削除しますか？`)) {
+          setWorkers(prev => prev.filter(w => w !== targetName));
+          showToast(`🗑️ 担当者「${targetName}」を削除しました。`);
+        }
+      };
+
+      const handleResetWorkers = () => {
+        if (confirm('担当者リストを初期状態（6名）に戻しますか？')) {
+          setWorkers(defaultWorkers);
+          showToast('🔄 担当者リストを初期状態に戻しました。');
+        }
+      };
+
+      // ================= 2. カラー設定ステート =================
+      const [newColorCode, setNewColorCode] = useState('');
+      const [newColorName, setNewColorName] = useState('');
+      const [newColorHex, setNewColorHex] = useState('#8B5CF6');
+      const [newColorTextColor, setNewColorTextColor] = useState('#FFFFFF');
+
+      const isBaseColor = (code) => ['C', 'M', 'Y', 'K'].includes(code);
+
+      const handleAddColor = (e) => {
+        if (e) e.preventDefault();
+        const codeTrim = newColorCode.trim();
+        const nameTrim = newColorName.trim();
+        if (!codeTrim) return alert('色コード（例: 特色3, 銀, 蛍光P 等）を入力してください。');
+        if (colors.some(c => c.code === codeTrim)) return alert(`色コード「${codeTrim}」は既に登録されています。`);
+
+        const newEntry = {
+          code: codeTrim,
+          name: nameTrim || `${codeTrim}版`,
+          bg: newColorHex,
+          text: newColorTextColor,
+          border: newColorHex.toUpperCase() === '#FFFFFF' ? '#CBD5E1' : undefined
+        };
+
+        setColors(prev => [...prev, newEntry]);
+        setNewColorCode('');
+        setNewColorName('');
+        setNewColorHex('#8B5CF6');
+        showToast(`🎨 新しい刷色・特色「${codeTrim}」を追加登録しました！`);
+      };
+
+      const handleDeleteColor = (code) => {
+        if (isBaseColor(code)) return alert('基本CMYKカラー（C, M, Y, K）は削除できません。');
+        if (confirm(`色「${code}」を削除しますか？`)) {
+          setColors(prev => prev.filter(c => c.code !== code));
+          showToast(`🗑️ 色「${code}」を削除しました。`);
+        }
+      };
+
+      const handleResetColors = () => {
+        if (confirm('カラー設定を初期プリセットに戻しますか？')) {
+          setColors(defaultColors);
+          showToast('🔄 カラー設定を初期プリセットに戻しました。');
+        }
+      };
+
+      // ================= 3. パレット設定ステート =================
+      const [palletAreaFilter, setPalletAreaFilter] = useState('ALL');
+      const [newArea, setNewArea] = useState('A');
+      const [newRow, setNewRow] = useState('');
+      const [newCol, setNewCol] = useState('1');
+      const [customPalletId, setCustomPalletId] = useState('');
+
+      const uniqueAreas = useMemo(() => {
+        const s = new Set(pallets.map(p => p.area));
+        return Array.from(s).sort();
+      }, [pallets]);
+
+      const filteredPallets = useMemo(() => {
+        if (palletAreaFilter === 'ALL') return pallets;
+        return pallets.filter(p => p.area === palletAreaFilter);
+      }, [pallets, palletAreaFilter]);
+
+      const handleAddPallet = (e) => {
+        if (e) e.preventDefault();
+        const areaTrim = newArea.trim().toUpperCase();
+        if (!areaTrim) return alert('エリア名を入力してください（例: A, B, C 等）。');
+        
+        let targetId = customPalletId.trim();
+        const rowNum = parseInt(newRow, 10);
+        const colNum = parseInt(newCol, 10) || 1;
+
+        if (!targetId) {
+          if (!rowNum) return alert('行番号を入力するか、パレットIDを直接入力してください。');
+          const rowStr = String(rowNum).padStart(2, '0');
+          targetId = `${areaTrim}-${rowStr}-${colNum}`;
+        }
+
+        if (pallets.some(p => p.id === targetId)) {
+          return alert(`パレットID「${targetId}」は既に存在します。別のIDを指定してください。`);
+        }
+
+        const newPalletObj = {
+          id: targetId,
+          area: areaTrim,
+          row: rowNum || 99,
+          col: colNum,
+          label: targetId
+        };
+
+        setPallets(prev => [...prev, newPalletObj]);
+        setCustomPalletId('');
+        setNewRow('');
+        showToast(`📦 パレット【${targetId}】を追加しました！`);
+      };
+
+      const handleQuickAddRow = (targetArea) => {
+        const existingInArea = pallets.filter(p => p.area === targetArea);
+        const maxRow = existingInArea.reduce((max, p) => Math.max(max, p.row || 0), 0);
+        const nextRow = maxRow + 1;
+        const rowStr = String(nextRow).padStart(2, '0');
+
+        const newP1 = { id: `${targetArea}-${rowStr}-1`, area: targetArea, row: nextRow, col: 1, label: `${targetArea}-${rowStr}-1` };
+        const newP2 = { id: `${targetArea}-${rowStr}-2`, area: targetArea, row: nextRow, col: 2, label: `${targetArea}-${rowStr}-2` };
+
+        setPallets(prev => [...prev, newP1, newP2]);
+        showToast(`🚀 エリア${targetArea}に 行${nextRow}（${newP1.id}, ${newP2.id} 計2マス）を追加しました！`);
+      };
+
+      const handleQuickAddNewArea = (areaLetter, rowCount = 5) => {
+        if (pallets.some(p => p.area === areaLetter)) {
+          return alert(`エリア「${areaLetter}」は既に存在します。`);
+        }
+        const created = [];
+        for (let r = 1; r <= rowCount; r++) {
+          const rowStr = String(r).padStart(2, '0');
+          created.push({ id: `${areaLetter}-${rowStr}-1`, area: areaLetter, row: r, col: 1, label: `${areaLetter}-${rowStr}-1` });
+          created.push({ id: `${areaLetter}-${rowStr}-2`, area: areaLetter, row: r, col: 2, label: `${areaLetter}-${rowStr}-2` });
+        }
+        setPallets(prev => [...prev, ...created]);
+        showToast(`✨ 新エリア【${areaLetter}】（計${created.length}マス）を新設しました！`);
+      };
+
+      const handleDeletePallet = (pId) => {
+        const stored = palletPlatesMap[pId] || [];
+        if (stored.length > 0) {
+          return alert(`パレット【${pId}】には現在 ${stored.length}版 が保管されているため削除できません。先に出庫または別のパレットへ移動してください。`);
+        }
+        if (confirm(`パレット【${pId}】を削除しますか？`)) {
+          setPallets(prev => prev.filter(p => p.id !== pId));
+          showToast(`🗑️ パレット【${pId}】を削除しました。`);
+        }
+      };
+
+      const handleResetPallets = () => {
+        if (confirm('パレット構成を初期状態（エリアA: 22マス、エリアB: 24マス 計46マス）に戻しますか？')) {
+          setPallets(defaultPallets);
+          showToast('🔄 パレット構成を初期状態に戻しました。');
+        }
+      };
+
+      // ================= 4. データ管理・バックアップ =================
+      const handleExportAllJSON = () => {
+        const backupData = {
+          version: '1.0',
+          exportedAt: new Date().toISOString(),
+          pallets,
+          workers,
+          colors,
+          plates,
+          logs
+        };
+        const blob = new Blob([JSON.stringify(backupData, null, 2)], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `印刷版倉庫管理_全バックアップ_${new Date().toISOString().slice(0, 10)}.json`;
+        a.click();
+        URL.revokeObjectURL(url);
+        showToast('💾 全設定・データをJSONファイルとしてエクスポートしました！');
+      };
+
+      const handleImportJSON = (e) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = (event) => {
+          try {
+            const data = JSON.parse(event.target.result);
+            if (!data.pallets || !data.plates) {
+              return alert('無効なバックアップファイルです。必要なデータキーが見つかりません。');
+            }
+            if (confirm('バックアップファイルからデータを復元しますか？現在のデータは上書きされます。')) {
+              if (data.pallets) setPallets(data.pallets);
+              if (data.workers) setWorkers(data.workers);
+              if (data.colors) setColors(data.colors);
+              if (data.plates) setPlates(data.plates);
+              if (data.logs) setLogs(data.logs);
+              showToast('✅ バックアップデータから正常に復元しました！');
+            }
+          } catch (err) {
+            alert('ファイルの読み込みに失敗しました: ' + err.message);
+          }
+        };
+        reader.readAsText(file);
+      };
+
+      const handleFullReset = () => {
+        if (confirm('⚠️ システム内の全データ（パレット、版、入出庫ログ、担当者、カラー）をすべて初期サンプル状態に完全リセットしますか？')) {
+          setPallets(defaultPallets);
+          setWorkers(defaultWorkers);
+          setColors(defaultColors);
+          setPlates(initialPlates);
+          setLogs(initialLogs);
+          showToast('🔄 全データを完全リセットしました。');
+        }
+      };
+
+      return (
+        <div class="max-w-7xl mx-auto w-full p-4 sm:p-6 space-y-6 animate-fadeIn">
+          
+          {/* 上部ヘッダーバー */}
+          <div class="bg-white border border-slate-200 rounded-2xl p-4 sm:p-5 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div class="flex items-center gap-3">
+              <div class="w-11 h-11 rounded-xl bg-slate-900 text-white flex items-center justify-center shadow-md">
+                <i data-lucide="settings" class="w-6 h-6 text-blue-400"></i>
+              </div>
+              <div>
+                <div class="flex items-center gap-2">
+                  <h2 class="text-lg sm:text-xl font-black text-slate-900">システム設定・マスター管理</h2>
+                  <span class="text-xs px-2 py-0.5 rounded-full bg-slate-100 text-slate-700 font-semibold border border-slate-300">
+                    管理者機能
+                  </span>
+                </div>
+                <p class="text-xs text-slate-500">
+                  現場の運用に合わせてパレット・担当作業者・刷色カラー・データの追加・編集・管理が行えます
+                </p>
+              </div>
+            </div>
+
+            <button
+              onClick={onBackToMap}
+              class="py-2.5 px-4 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs sm:text-sm font-bold flex items-center justify-center gap-2 shadow-md shadow-blue-500/20 transition-all cursor-pointer whitespace-nowrap"
+            >
+              <i data-lucide="arrow-left" class="w-4 h-4"></i>
+              <span>全体図（マップ）に戻る</span>
+            </button>
+          </div>
+
+          {/* タブ切り替えバー */}
+          <div class="flex items-center gap-2 overflow-x-auto pb-1 border-b border-slate-200">
+            <button
+              onClick={() => setActiveTab('workers')}
+              className={`py-2.5 px-4 rounded-xl font-bold text-xs sm:text-sm flex items-center gap-2 transition-all whitespace-nowrap ${
+                activeTab === 'workers'
+                  ? 'bg-blue-600 text-white shadow-md shadow-blue-500/20'
+                  : 'bg-white hover:bg-slate-50 text-slate-700 border border-slate-200'
+              }`}
+            >
+              <i data-lucide="users" class="w-4 h-4"></i>
+              <span>担当者（作業者）設定</span>
+              <span className={`text-[10px] px-1.5 py-0.2 rounded-full ${activeTab === 'workers' ? 'bg-white/20' : 'bg-slate-100 text-slate-600'}`}>
+                {workers.length}名
+              </span>
+            </button>
+
+            <button
+              onClick={() => setActiveTab('colors')}
+              className={`py-2.5 px-4 rounded-xl font-bold text-xs sm:text-sm flex items-center gap-2 transition-all whitespace-nowrap ${
+                activeTab === 'colors'
+                  ? 'bg-blue-600 text-white shadow-md shadow-blue-500/20'
+                  : 'bg-white hover:bg-slate-50 text-slate-700 border border-slate-200'
+              }`}
+            >
+              <i data-lucide="palette" class="w-4 h-4"></i>
+              <span>刷色・特色カラー設定</span>
+              <span className={`text-[10px] px-1.5 py-0.2 rounded-full ${activeTab === 'colors' ? 'bg-white/20' : 'bg-slate-100 text-slate-600'}`}>
+                {colors.length}色
+              </span>
+            </button>
+
+            <button
+              onClick={() => setActiveTab('pallets')}
+              className={`py-2.5 px-4 rounded-xl font-bold text-xs sm:text-sm flex items-center gap-2 transition-all whitespace-nowrap ${
+                activeTab === 'pallets'
+                  ? 'bg-blue-600 text-white shadow-md shadow-blue-500/20'
+                  : 'bg-white hover:bg-slate-50 text-slate-700 border border-slate-200'
+              }`}
+            >
+              <i data-lucide="grid" class="w-4 h-4"></i>
+              <span>パレット・倉庫エリア設定</span>
+              <span className={`text-[10px] px-1.5 py-0.2 rounded-full ${activeTab === 'pallets' ? 'bg-white/20' : 'bg-slate-100 text-slate-600'}`}>
+                {pallets.length}枠
+              </span>
+            </button>
+
+            <button
+              onClick={() => setActiveTab('data')}
+              className={`py-2.5 px-4 rounded-xl font-bold text-xs sm:text-sm flex items-center gap-2 transition-all whitespace-nowrap ${
+                activeTab === 'data'
+                  ? 'bg-blue-600 text-white shadow-md shadow-blue-500/20'
+                  : 'bg-white hover:bg-slate-50 text-slate-700 border border-slate-200'
+              }`}
+            >
+              <i data-lucide="database" class="w-4 h-4"></i>
+              <span>データ管理・バックアップ</span>
+            </button>
+          </div>
+
+          {/* ================= タブ1: 担当者設定 ================= */}
+          {activeTab === 'workers' && (
+            <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
+              {/* 新規担当者追加カード */}
+              <div class="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm space-y-4">
+                <div class="flex items-center gap-2.5 border-b border-slate-100 pb-3">
+                  <div class="w-8 h-8 rounded-lg bg-blue-100 text-blue-700 flex items-center justify-center">
+                    <i data-lucide="user-plus" class="w-4 h-4"></i>
+                  </div>
+                  <div>
+                    <h3 class="font-bold text-sm text-slate-900">新規担当者の追加</h3>
+                    <p class="text-[11px] text-slate-500">入出庫時に記録される作業者名</p>
+                  </div>
+                </div>
+
+                <form onSubmit={handleAddWorker} class="space-y-3">
+                  <div>
+                    <label class="text-xs font-bold text-slate-700 block mb-1">
+                      作業者氏名 <span class="text-red-500">*</span>:
+                    </label>
+                    <input
+                      type="text"
+                      value={newWorkerName}
+                      onChange={(e) => setNewWorkerName(e.target.value)}
+                      placeholder="例: 木村 拓也 (印刷OP)"
+                      class="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-sm text-slate-900 focus:bg-white focus:border-blue-500 focus:outline-none"
+                    />
+                  </div>
+
+                  <button
+                    type="submit"
+                    class="w-full py-2.5 px-4 rounded-xl bg-blue-600 hover:bg-blue-700 active:scale-[0.98] text-white font-bold text-xs flex items-center justify-center gap-1.5 shadow-md shadow-blue-500/20 transition-all cursor-pointer"
+                  >
+                    <i data-lucide="plus" class="w-4 h-4"></i>
+                    <span>担当者を追加する</span>
+                  </button>
+                </form>
+
+                <div class="pt-3 border-t border-slate-100">
+                  <button
+                    type="button"
+                    onClick={handleResetWorkers}
+                    class="w-full py-2 px-3 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-600 text-xs font-semibold flex items-center justify-center gap-1 transition-colors"
+                  >
+                    <i data-lucide="rotate-ccw" class="w-3.5 h-3.5"></i>
+                    <span>初期担当者（6名）に戻す</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* 登録済み担当者一覧リスト */}
+              <div class="lg:col-span-2 bg-white border border-slate-200 rounded-2xl p-5 shadow-sm space-y-4">
+                <div class="flex items-center justify-between border-b border-slate-100 pb-3">
+                  <div class="flex items-center gap-2">
+                    <h3 class="font-bold text-sm text-slate-900">登録済み担当者一覧</h3>
+                    <span class="text-xs font-mono px-2 py-0.5 rounded-full bg-blue-50 text-blue-700 font-bold border border-blue-200">
+                      全 {workers.length} 名
+                    </span>
+                  </div>
+                  <span class="text-xs text-slate-400">入出庫モーダルの選択肢に即時反映されます</span>
+                </div>
+
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  {workers.map((worker, idx) => (
+                    <div
+                      key={worker}
+                      class="p-3 rounded-xl bg-slate-50 border border-slate-200 flex items-center justify-between hover:bg-slate-100/70 transition-colors"
+                    >
+                      <div class="flex items-center gap-3">
+                        <div class="w-8 h-8 rounded-full bg-gradient-to-br from-blue-500 to-indigo-600 text-white font-bold text-xs flex items-center justify-center shadow-sm">
+                          {worker.slice(0, 1)}
+                        </div>
+                        <div>
+                          <div class="font-bold text-sm text-slate-900">{worker}</div>
+                          <div class="text-[10px] text-slate-400">No. {idx + 1}</div>
+                        </div>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() => handleDeleteWorker(worker)}
+                        title="担当者を削除"
+                        class="p-2 rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-50 transition-colors"
+                      >
+                        <i data-lucide="trash-2" class="w-4 h-4"></i>
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* ================= タブ2: カラー（刷色・特色）設定 ================= */}
+          {activeTab === 'colors' && (
+            <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
+              {/* 新規カラー追加カード */}
+              <div class="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm space-y-4">
+                <div class="flex items-center gap-2.5 border-b border-slate-100 pb-3">
+                  <div class="w-8 h-8 rounded-lg bg-purple-100 text-purple-700 flex items-center justify-center">
+                    <i data-lucide="plus-circle" class="w-4 h-4"></i>
+                  </div>
+                  <div>
+                    <h3 class="font-bold text-sm text-slate-900">新規特色・カラーの追加</h3>
+                    <p class="text-[11px] text-slate-500">版登録で選択できる色を追加します</p>
+                  </div>
+                </div>
+
+                <form onSubmit={handleAddColor} class="space-y-3">
+                  <div>
+                    <label class="text-xs font-bold text-slate-700 block mb-1">
+                      色コード（略称） <span class="text-red-500">*</span>:
+                    </label>
+                    <input
+                      type="text"
+                      value={newColorCode}
+                      onChange={(e) => setNewColorCode(e.target.value)}
+                      placeholder="例: 特色3, 銀, 蛍光P, DIC582"
+                      class="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-sm text-slate-900 focus:bg-white focus:border-purple-500 focus:outline-none"
+                    />
+                  </div>
+
+                  <div>
+                    <label class="text-xs font-bold text-slate-700 block mb-1">
+                      表示名（正式名称・任意）:
+                    </label>
+                    <input
+                      type="text"
+                      value={newColorName}
+                      onChange={(e) => setNewColorName(e.target.value)}
+                      placeholder="例: 特色3 (青金 DIC-620)"
+                      class="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-sm text-slate-900 focus:bg-white focus:border-purple-500 focus:outline-none"
+                    />
+                  </div>
+
+                  {/* カラーピッカー & HEX */}
+                  <div>
+                    <label class="text-xs font-bold text-slate-700 block mb-1">
+                      カラー指定:
+                    </label>
+                    <div class="flex items-center gap-2">
+                      <input
+                        type="color"
+                        value={newColorHex}
+                        onChange={(e) => setNewColorHex(e.target.value)}
+                        class="w-10 h-10 rounded-lg cursor-pointer border border-slate-300 p-0.5"
+                      />
+                      <input
+                        type="text"
+                        value={newColorHex}
+                        onChange={(e) => setNewColorHex(e.target.value)}
+                        placeholder="#8B5CF6"
+                        class="flex-1 bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-sm font-mono text-slate-900 focus:bg-white focus:border-purple-500 focus:outline-none uppercase"
+                      />
+                    </div>
+                  </div>
+
+                  {/* 文字色指定 */}
+                  <div>
+                    <label class="text-xs font-bold text-slate-700 block mb-1">
+                      チップ文字色:
+                    </label>
+                    <div class="grid grid-cols-2 gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setNewColorTextColor('#FFFFFF')}
+                        className={`p-2 rounded-lg border text-xs font-bold transition-all ${
+                          newColorTextColor === '#FFFFFF' ? 'bg-slate-900 text-white border-slate-900' : 'bg-slate-50 text-slate-700 border-slate-200'
+                        }`}
+                      >
+                        白文字 (A)
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setNewColorTextColor('#0F172A')}
+                        className={`p-2 rounded-lg border text-xs font-bold transition-all ${
+                          newColorTextColor === '#0F172A' ? 'bg-slate-900 text-white border-slate-900' : 'bg-slate-50 text-slate-700 border-slate-200'
+                        }`}
+                      >
+                        黒文字 (A)
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* プレビュー */}
+                  <div class="bg-slate-50 p-3 rounded-xl border border-slate-200 flex items-center justify-between">
+                    <span class="text-xs text-slate-500 font-medium">プレビュー:</span>
+                    <div class="flex items-center gap-2">
+                      <span
+                        style={{ backgroundColor: newColorHex, color: newColorTextColor }}
+                        class="w-7 h-7 rounded-full flex items-center justify-center font-bold text-xs shadow-sm"
+                      >
+                        {(newColorCode || '色').slice(0, 1)}
+                      </span>
+                      <span class="font-bold text-xs text-slate-800">
+                        {newColorCode || '未入力'}版
+                      </span>
+                    </div>
+                  </div>
+
+                  <button
+                    type="submit"
+                    class="w-full py-2.5 px-4 rounded-xl bg-purple-600 hover:bg-purple-700 active:scale-[0.98] text-white font-bold text-xs flex items-center justify-center gap-1.5 shadow-md shadow-purple-500/20 transition-all cursor-pointer"
+                  >
+                    <i data-lucide="plus" class="w-4 h-4"></i>
+                    <span>カラーを追加する</span>
+                  </button>
+                </form>
+
+                <div class="pt-3 border-t border-slate-100">
+                  <button
+                    type="button"
+                    onClick={handleResetColors}
+                    class="w-full py-2 px-3 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-600 text-xs font-semibold flex items-center justify-center gap-1 transition-colors"
+                  >
+                    <i data-lucide="rotate-ccw" class="w-3.5 h-3.5"></i>
+                    <span>初期カラーに戻す</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* 登録済みカラー一覧リスト */}
+              <div class="lg:col-span-2 bg-white border border-slate-200 rounded-2xl p-5 shadow-sm space-y-4">
+                <div class="flex items-center justify-between border-b border-slate-100 pb-3">
+                  <div class="flex items-center gap-2">
+                    <h3 class="font-bold text-sm text-slate-900">登録済みカラーマスター一覧</h3>
+                    <span class="text-xs font-mono px-2 py-0.5 rounded-full bg-purple-50 text-purple-700 font-bold border border-purple-200">
+                      全 {colors.length} 色
+                    </span>
+                  </div>
+                  <span class="text-xs text-slate-400">※CMYKは基本システム保護色です</span>
+                </div>
+
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  {colors.map(col => {
+                    const isBase = isBaseColor(col.code);
+                    return (
+                      <div
+                        key={col.code}
+                        class="p-3.5 rounded-xl bg-slate-50 border border-slate-200 flex items-center justify-between hover:bg-slate-100/70 transition-colors"
+                      >
+                        <div class="flex items-center gap-3">
+                          <span
+                            style={{ 
+                              backgroundColor: col.bg, 
+                              color: col.text || '#FFFFFF',
+                              border: col.code === '白' || col.bg.toUpperCase() === '#FFFFFF' ? '1px solid #CBD5E1' : 'none'
+                            }}
+                            class="w-8 h-8 rounded-full flex items-center justify-center font-bold text-xs shadow-sm shrink-0"
+                          >
+                            {col.code.slice(0, 1)}
+                          </span>
+                          <div>
+                            <div class="font-bold text-sm text-slate-900 flex items-center gap-1.5">
+                              <span>{col.name || `${col.code}版`}</span>
+                              {isBase && (
+                                <span class="text-[9px] px-1.5 py-0.2 rounded bg-blue-100 text-blue-700 font-bold border border-blue-200">
+                                  基本
+                                </span>
+                              )}
+                            </div>
+                            <div class="text-[11px] font-mono text-slate-500 uppercase">
+                              コード: {col.code} / {col.bg}
+                            </div>
+                          </div>
+                        </div>
+
+                        {!isBase ? (
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteColor(col.code)}
+                            title="カラーを削除"
+                            class="p-2 rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-50 transition-colors"
+                          >
+                            <i data-lucide="trash-2" class="w-4 h-4"></i>
+                          </button>
+                        ) : (
+                          <span class="text-xs text-slate-400 px-2 py-1 font-mono">固定</span>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* ================= タブ3: パレット・倉庫エリア設定 ================= */}
+          {activeTab === 'pallets' && (
+            <div class="space-y-6">
+              
+              {/* クイック一括増設 ＆ 新規パレット追加セクション */}
+              <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
+                
+                {/* ① クイック増設アクション */}
+                <div class="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm space-y-4">
+                  <div class="flex items-center gap-2.5 border-b border-slate-100 pb-3">
+                    <div class="w-8 h-8 rounded-lg bg-emerald-100 text-emerald-700 flex items-center justify-center">
+                      <i data-lucide="zap" class="w-4 h-4"></i>
+                    </div>
+                    <div>
+                      <h3 class="font-bold text-sm text-slate-900">クイック行増設アクション</h3>
+                      <p class="text-[11px] text-slate-500">既存エリアや新エリアへワンクリック追加</p>
+                    </div>
+                  </div>
+
+                  <div class="space-y-2.5">
+                    <button
+                      type="button"
+                      onClick={() => handleQuickAddRow('A')}
+                      class="w-full p-3 rounded-xl bg-blue-50 hover:bg-blue-100 border border-blue-200 text-blue-900 font-bold text-xs flex items-center justify-between transition-colors cursor-pointer"
+                    >
+                      <div class="flex items-center gap-2">
+                        <span class="w-2.5 h-2.5 rounded-full bg-blue-600"></span>
+                        <span>エリアAに1行追加 (2マス)</span>
+                      </div>
+                      <i data-lucide="plus" class="w-4 h-4 text-blue-700"></i>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => handleQuickAddRow('B')}
+                      class="w-full p-3 rounded-xl bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 text-emerald-900 font-bold text-xs flex items-center justify-between transition-colors cursor-pointer"
+                    >
+                      <div class="flex items-center gap-2">
+                        <span class="w-2.5 h-2.5 rounded-full bg-emerald-600"></span>
+                        <span>エリアBに1行追加 (2マス)</span>
+                      </div>
+                      <i data-lucide="plus" class="w-4 h-4 text-emerald-700"></i>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => handleQuickAddNewArea('C', 5)}
+                      class="w-full p-3 rounded-xl bg-purple-50 hover:bg-purple-100 border border-purple-200 text-purple-900 font-bold text-xs flex items-center justify-between transition-colors cursor-pointer"
+                    >
+                      <div class="flex items-center gap-2">
+                        <span class="w-2.5 h-2.5 rounded-full bg-purple-600"></span>
+                        <span>新エリア「C」を新設 (5行×2列 = 10マス)</span>
+                      </div>
+                      <i data-lucide="plus" class="w-4 h-4 text-purple-700"></i>
+                    </button>
+                  </div>
+
+                  <div class="pt-3 border-t border-slate-100">
+                    <button
+                      type="button"
+                      onClick={handleResetPallets}
+                      class="w-full py-2 px-3 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-600 text-xs font-semibold flex items-center justify-center gap-1 transition-colors"
+                    >
+                      <i data-lucide="rotate-ccw" class="w-3.5 h-3.5"></i>
+                      <span>初期パレット（計46マス）に戻す</span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* ② 単一パレット手動追加フォーム */}
+                <div class="lg:col-span-2 bg-white border border-slate-200 rounded-2xl p-5 shadow-sm space-y-4">
+                  <div class="flex items-center gap-2.5 border-b border-slate-100 pb-3">
+                    <div class="w-8 h-8 rounded-lg bg-blue-100 text-blue-700 flex items-center justify-center">
+                      <i data-lucide="plus-square" class="w-4 h-4"></i>
+                    </div>
+                    <div>
+                      <h3 class="font-bold text-sm text-slate-900">単一パレットの個別追加</h3>
+                      <p class="text-[11px] text-slate-500">指定のエリア・行・列・または自由なパレットIDを登録します</p>
+                    </div>
+                  </div>
+
+                  <form onSubmit={handleAddPallet} class="grid grid-cols-1 sm:grid-cols-4 gap-3">
+                    <div>
+                      <label class="text-xs font-bold text-slate-700 block mb-1">
+                        エリア <span class="text-red-500">*</span>:
+                      </label>
+                      <input
+                        type="text"
+                        value={newArea}
+                        onChange={(e) => setNewArea(e.target.value.toUpperCase())}
+                        placeholder="A, B, C 等"
+                        class="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-sm font-mono text-slate-900 focus:bg-white focus:border-blue-500 focus:outline-none uppercase"
+                      />
+                    </div>
+
+                    <div>
+                      <label class="text-xs font-bold text-slate-700 block mb-1">
+                        行番号 (任意):
+                      </label>
+                      <input
+                        type="number"
+                        min="1"
+                        max="99"
+                        value={newRow}
+                        onChange={(e) => setNewRow(e.target.value)}
+                        placeholder="例: 13"
+                        class="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-sm font-mono text-slate-900 focus:bg-white focus:border-blue-500 focus:outline-none"
+                      />
+                    </div>
+
+                    <div>
+                      <label class="text-xs font-bold text-slate-700 block mb-1">
+                        列 (1または2):
+                      </label>
+                      <select
+                        value={newCol}
+                        onChange={(e) => setNewCol(e.target.value)}
+                        class="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-sm font-mono text-slate-900 focus:bg-white focus:border-blue-500 focus:outline-none"
+                      >
+                        <option value="1">1列目 (左)</option>
+                        <option value="2">2列目 (右)</option>
+                      </select>
+                    </div>
+
+                    <div>
+                      <label class="text-xs font-bold text-slate-700 block mb-1">
+                        カスタムID (任意):
+                      </label>
+                      <input
+                        type="text"
+                        value={customPalletId}
+                        onChange={(e) => setCustomPalletId(e.target.value)}
+                        placeholder="未入力時自動生成"
+                        class="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-sm font-mono text-slate-900 focus:bg-white focus:border-blue-500 focus:outline-none uppercase"
+                      />
+                    </div>
+
+                    <div class="sm:col-span-4 flex items-center justify-end pt-1">
+                      <button
+                        type="submit"
+                        class="py-2.5 px-6 rounded-xl bg-blue-600 hover:bg-blue-700 active:scale-[0.98] text-white font-bold text-xs flex items-center justify-center gap-1.5 shadow-md shadow-blue-500/20 transition-all cursor-pointer"
+                      >
+                        <i data-lucide="plus" class="w-4 h-4"></i>
+                        <span>パレットを倉庫に登録する</span>
+                      </button>
+                    </div>
+                  </form>
+                </div>
+              </div>
+
+              {/* パレット一覧テーブル ＆ エリア絞り込み */}
+              <div class="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm space-y-4">
+                <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-3">
+                  <div class="flex items-center gap-2">
+                    <h3 class="font-bold text-sm text-slate-900">倉庫パレット枠一覧</h3>
+                    <span class="text-xs font-mono px-2.5 py-0.5 rounded-full bg-slate-100 text-slate-800 font-bold border border-slate-200">
+                      現在 {pallets.length} マス
+                    </span>
+                  </div>
+
+                  {/* エリアフィルターボタン */}
+                  <div class="flex items-center gap-1.5 flex-wrap">
+                    <button
+                      type="button"
+                      onClick={() => setPalletAreaFilter('ALL')}
+                      className={`text-xs px-3 py-1.5 rounded-lg font-bold border transition-all ${
+                        palletAreaFilter === 'ALL'
+                          ? 'bg-blue-600 text-white border-blue-600 shadow-sm'
+                          : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-50'
+                      }`}
+                    >
+                      全エリア ({pallets.length})
+                    </button>
+                    {uniqueAreas.map(area => (
+                      <button
+                        key={area}
+                        type="button"
+                        onClick={() => setPalletAreaFilter(area)}
+                        className={`text-xs px-3 py-1.5 rounded-lg font-bold border transition-all ${
+                          palletAreaFilter === area
+                            ? 'bg-blue-600 text-white border-blue-600 shadow-sm'
+                            : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-50'
+                        }`}
+                      >
+                        エリア{area} ({pallets.filter(p => p.area === area).length})
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* パレットカードグリッド */}
+                <div class="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8 gap-2.5 max-h-[500px] overflow-y-auto pr-1">
+                  {filteredPallets.map(pallet => {
+                    const stored = palletPlatesMap[pallet.id] || [];
+                    const isOccupied = stored.length > 0;
+                    return (
+                      <div
+                        key={pallet.id}
+                        class="p-2.5 rounded-xl border border-slate-200 bg-slate-50 flex flex-col justify-between hover:bg-slate-100/80 transition-colors"
+                      >
+                        <div class="flex items-center justify-between gap-1 mb-1">
+                          <span class="font-mono text-xs font-bold text-slate-900 truncate">
+                            {pallet.id}
+                          </span>
+                          {!isOccupied && (
+                            <button
+                              type="button"
+                              onClick={() => handleDeletePallet(pallet.id)}
+                              title="空きパレットを削除"
+                              class="text-slate-400 hover:text-red-600 p-0.5"
+                            >
+                              <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
+                            </button>
+                          )}
+                        </div>
+
+                        <div>
+                          {isOccupied ? (
+                            <span class="text-[10px] font-bold text-blue-700 bg-blue-100 px-1.5 py-0.5 rounded border border-blue-200 block truncate text-center">
+                              #{stored[0]?.orderNo} ({stored.length}版)
+                            </span>
+                          ) : (
+                            <span class="text-[10px] font-bold text-slate-400 bg-white px-1.5 py-0.5 rounded border border-slate-200 block text-center">
+                              空き
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+            </div>
+          )}
+
+          {/* ================= タブ4: データ管理・バックアップ ================= */}
+          {activeTab === 'data' && (
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-6 items-start">
+              
+              {/* システム集計カード */}
+              <div class="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm space-y-4">
+                <div class="flex items-center gap-2.5 border-b border-slate-100 pb-3">
+                  <div class="w-8 h-8 rounded-lg bg-blue-100 text-blue-700 flex items-center justify-center">
+                    <i data-lucide="bar-chart-3" class="w-4 h-4"></i>
+                  </div>
+                  <div>
+                    <h3 class="font-bold text-sm text-slate-900">システム登録データ集計</h3>
+                    <p class="text-[11px] text-slate-500">現在ブラウザに保持されているデータ状況</p>
+                  </div>
+                </div>
+
+                <div class="grid grid-cols-2 gap-3 text-xs">
+                  <div class="p-3 rounded-xl bg-slate-50 border border-slate-200">
+                    <span class="text-slate-500">パレット総数:</span>
+                    <div class="text-lg font-mono font-bold text-slate-900">{pallets.length} 枠</div>
+                  </div>
+                  <div class="p-3 rounded-xl bg-slate-50 border border-slate-200">
+                    <span class="text-slate-500">登録済み版総数:</span>
+                    <div class="text-lg font-mono font-bold text-slate-900">{plates.length} 版</div>
+                  </div>
+                  <div class="p-3 rounded-xl bg-slate-50 border border-slate-200">
+                    <span class="text-slate-500">担当者数:</span>
+                    <div class="text-lg font-mono font-bold text-slate-900">{workers.length} 名</div>
+                  </div>
+                  <div class="p-3 rounded-xl bg-slate-50 border border-slate-200">
+                    <span class="text-slate-500">カラー数:</span>
+                    <div class="text-lg font-mono font-bold text-slate-900">{colors.length} 色</div>
+                  </div>
+                  <div class="p-3 rounded-xl bg-slate-50 border border-slate-200 col-span-2">
+                    <span class="text-slate-500">入出庫ログ記録件数:</span>
+                    <div class="text-lg font-mono font-bold text-slate-900">{logs.length} 件</div>
+                  </div>
+                </div>
+              </div>
+
+              {/* バックアップと復元カード */}
+              <div class="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm space-y-4">
+                <div class="flex items-center gap-2.5 border-b border-slate-100 pb-3">
+                  <div class="w-8 h-8 rounded-lg bg-emerald-100 text-emerald-700 flex items-center justify-center">
+                    <i data-lucide="hard-drive" class="w-4 h-4"></i>
+                  </div>
+                  <div>
+                    <h3 class="font-bold text-sm text-slate-900">バックアップ ＆ 復元</h3>
+                    <p class="text-[11px] text-slate-500">JSON形式で丸ごと保存・復元できます</p>
+                  </div>
+                </div>
+
+                <div class="space-y-3">
+                  <button
+                    type="button"
+                    onClick={handleExportAllJSON}
+                    class="w-full py-3 px-4 rounded-xl bg-blue-600 hover:bg-blue-700 active:scale-[0.98] text-white font-bold text-xs sm:text-sm flex items-center justify-center gap-2 shadow-md shadow-blue-500/20 transition-all cursor-pointer"
+                  >
+                    <i data-lucide="download" class="w-4 h-4"></i>
+                    <span>全データをJSONエクスポート（ダウンロード）</span>
+                  </button>
+
+                  <label class="w-full py-3 px-4 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold text-xs sm:text-sm flex items-center justify-center gap-2 transition-colors cursor-pointer border border-slate-200 block text-center">
+                    <i data-lucide="upload" class="w-4 h-4 inline-block"></i>
+                    <span>JSONファイルからデータを復元（インポート）</span>
+                    <input
+                      type="file"
+                      accept=".json"
+                      onChange={handleImportJSON}
+                      class="hidden"
+                    />
+                  </label>
+
+                  <div class="pt-4 border-t border-slate-100">
+                    <button
+                      type="button"
+                      onClick={handleFullReset}
+                      class="w-full py-2.5 px-3 rounded-xl bg-red-50 hover:bg-red-100 text-red-700 font-bold text-xs border border-red-200 flex items-center justify-center gap-1.5 transition-colors"
+                    >
+                      <i data-lucide="alert-triangle" class="w-4 h-4"></i>
+                      <span>全データを初期サンプル状態に完全リセット</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+            </div>
+          )}
+
         </div>
       );
     }
