@@ -1,0 +1,2268 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>印刷版 倉庫パレット管理システム | Plate Warehouse Manager</title>
+  
+  <!-- Google Fonts: Inter & Noto Sans JP -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Noto+Sans+JP:wght@400;500;700;900&family=JetBrains+Mono:wght@600;700;800&display=swap" rel="stylesheet">
+  
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  
+  <!-- Tailwind Config -->
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['"Inter"', '"Noto Sans JP"', 'sans-serif'],
+            mono: ['"JetBrains Mono"', 'monospace'],
+          },
+          colors: {
+            cmyk: {
+              c: '#00A3E0',
+              m: '#E6007E',
+              y: '#EAB308',
+              k: '#1E293B',
+              spot: '#8B5CF6',
+              gold: '#D97706',
+              silver: '#64748B'
+            }
+          },
+          keyframes: {
+            yellowPulse: {
+              '0%, 100%': {
+                boxShadow: '0 0 0 3px rgba(234, 179, 8, 0.8), 0 0 16px rgba(234, 179, 8, 0.4)',
+                borderColor: '#EAB308',
+                backgroundColor: '#FEF9C3'
+              },
+              '50%': {
+                boxShadow: '0 0 0 5px rgba(234, 179, 8, 0.3), 0 0 8px rgba(234, 179, 8, 0.2)',
+                borderColor: '#FACC15',
+                backgroundColor: '#FEF08A'
+              }
+            }
+          },
+          animation: {
+            'highlight-pulse': 'yellowPulse 1.4s infinite',
+          }
+        }
+      }
+    };
+  </script>
+
+  <!-- React 18 & ReactDOM & Babel CDN -->
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+  <!-- Lucide Icons CDN -->
+  <script src="https://unpkg.com/lucide@latest"></script>
+
+  <style>
+    /* Custom Scrollbars */
+    ::-webkit-scrollbar {
+      width: 6px;
+      height: 6px;
+    }
+    ::-webkit-scrollbar-track {
+      background: #F1F5F9;
+    }
+    ::-webkit-scrollbar-thumb {
+      background: #CBD5E1;
+      border-radius: 4px;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+      background: #94A3B8;
+    }
+
+    .highlight-pallet {
+      animation: yellowPulse 1.3s infinite !important;
+      z-index: 20;
+      position: relative;
+    }
+  </style>
+</head>
+<body class="bg-slate-100/90 text-slate-800 min-h-screen antialiased selection:bg-blue-500 selection:text-white font-sans">
+  <div id="root"></div>
+
+  <!-- React Application Source -->
+  <script type="text/babel">
+    const { useState, useEffect, useMemo, useRef } = React;
+
+    // --- カラー定義 (印刷現場用CMYK+特色) ---
+    const COLOR_PRESETS = [
+      { code: 'C', name: 'シアン (C)', bg: '#00A3E0', text: '#FFFFFF' },
+      { code: 'M', name: 'マゼンタ (M)', bg: '#E6007E', text: '#FFFFFF' },
+      { code: 'Y', name: 'イエロー (Y)', bg: '#FACC15', text: '#000000', border: '#CA8A04' },
+      { code: 'K', name: 'ブラック (K)', bg: '#1E293B', text: '#FFFFFF' },
+      { code: '特色1', name: '特色1 (金)', bg: '#D97706', text: '#FFFFFF' },
+      { code: '特色2', name: '特色2 (銀)', bg: '#64748B', text: '#FFFFFF' },
+      { code: '白', name: '白 (W)', bg: '#FFFFFF', text: '#0F172A', border: '#94A3B8' },
+      { code: 'ニス', name: 'OPニス', bg: '#8B5CF6', text: '#FFFFFF' }
+    ];
+
+    // 作業者プリセットリスト
+    const WORKER_PRESETS = [
+      '佐藤 健一',
+      '鈴木 大輔',
+      '高橋 涼介',
+      '田中 翔太',
+      '渡辺 直樹',
+      '伊藤 翼'
+    ];
+
+    // --- パレットマスター定義 (A: 11行×2列=22, B: 12行×2列=24) ---
+    const GENERATE_PALLETS = () => {
+      const list = [];
+      // エリアA: 11行 × 2列
+      for (let r = 1; r <= 11; r++) {
+        for (let c = 1; c <= 2; c++) {
+          const rowStr = String(r).padStart(2, '0');
+          list.push({
+            id: `A-${rowStr}-${c}`,
+            area: 'A',
+            row: r,
+            col: c,
+            label: `A-${rowStr}-${c}`
+          });
+        }
+      }
+      // エリアB: 12行 × 2列
+      for (let r = 1; r <= 12; r++) {
+        for (let c = 1; c <= 2; c++) {
+          const rowStr = String(r).padStart(2, '0');
+          list.push({
+            id: `B-${rowStr}-${c}`,
+            area: 'B',
+            row: r,
+            col: c,
+            label: `B-${rowStr}-${c}`
+          });
+        }
+      }
+      return list;
+    };
+
+    const ALL_PALLETS = GENERATE_PALLETS();
+
+    // --- 初期サンプルデータ (1つのパレットに複数受注・複数版の同居をサポート) ---
+    const INITIAL_PLATES = [
+      // パレット A-01-1: 【複数保管の例】#1042 (4色) ＋ #1099 (1色) が同居
+      { plateId: 'PLT-1042-C', orderNo: '1042', branchNo: '01', color: 'C', colorHex: '#00A3E0', status: 'IN_STORAGE', currentPalletId: 'A-01-1', currentWorker: null, lastMovedAt: '2026-10-08T09:30:00' },
+      { plateId: 'PLT-1042-M', orderNo: '1042', branchNo: '01', color: 'M', colorHex: '#E6007E', status: 'IN_STORAGE', currentPalletId: 'A-01-1', currentWorker: null, lastMovedAt: '2026-10-08T09:30:00' },
+      { plateId: 'PLT-1042-Y', orderNo: '1042', branchNo: '01', color: 'Y', colorHex: '#FACC15', status: 'IN_STORAGE', currentPalletId: 'A-01-1', currentWorker: null, lastMovedAt: '2026-10-08T09:30:00' },
+      { plateId: 'PLT-1042-K', orderNo: '1042', branchNo: '01', color: 'K', colorHex: '#1E293B', status: 'IN_STORAGE', currentPalletId: 'A-01-1', currentWorker: null, lastMovedAt: '2026-10-08T09:30:00' },
+      { plateId: 'PLT-1099-K', orderNo: '1099', branchNo: '01', color: 'K', colorHex: '#1E293B', status: 'IN_STORAGE', currentPalletId: 'A-01-1', currentWorker: null, lastMovedAt: '2026-10-08T10:00:00' },
+
+      // パレット A-03-2 に #2088 の 3色 (保管中)
+      { plateId: 'PLT-2088-C', orderNo: '2088', branchNo: '01', color: 'C', colorHex: '#00A3E0', status: 'IN_STORAGE', currentPalletId: 'A-03-2', currentWorker: null, lastMovedAt: '2026-10-08T10:15:00' },
+      { plateId: 'PLT-2088-M', orderNo: '2088', branchNo: '01', color: 'M', colorHex: '#E6007E', status: 'IN_STORAGE', currentPalletId: 'A-03-2', currentWorker: null, lastMovedAt: '2026-10-08T10:15:00' },
+      { plateId: 'PLT-2088-特色1', orderNo: '2088', branchNo: '01', color: '特色1', colorHex: '#D97706', status: 'IN_STORAGE', currentPalletId: 'A-03-2', currentWorker: null, lastMovedAt: '2026-10-08T10:15:00' },
+
+      // パレット A-07-1 に #3055 の 2色 (保管中)
+      { plateId: 'PLT-3055-K', orderNo: '3055', branchNo: '01', color: 'K', colorHex: '#1E293B', status: 'IN_STORAGE', currentPalletId: 'A-07-1', currentWorker: null, lastMovedAt: '2026-10-08T11:00:00' },
+      { plateId: 'PLT-3055-特色2', orderNo: '3055', branchNo: '01', color: '特色2', colorHex: '#64748B', status: 'IN_STORAGE', currentPalletId: 'A-07-1', currentWorker: null, lastMovedAt: '2026-10-08T11:00:00' },
+
+      // パレット B-02-1: 【複数保管の例】#4110 (4色) ＋ #4205 (2色) が同居
+      { plateId: 'PLT-4110-C', orderNo: '4110', branchNo: '01', color: 'C', colorHex: '#00A3E0', status: 'IN_STORAGE', currentPalletId: 'B-02-1', currentWorker: null, lastMovedAt: '2026-10-08T12:00:00' },
+      { plateId: 'PLT-4110-M', orderNo: '4110', branchNo: '01', color: 'M', colorHex: '#E6007E', status: 'IN_STORAGE', currentPalletId: 'B-02-1', currentWorker: null, lastMovedAt: '2026-10-08T12:00:00' },
+      { plateId: 'PLT-4110-Y', orderNo: '4110', branchNo: '01', color: 'Y', colorHex: '#FACC15', status: 'IN_STORAGE', currentPalletId: 'B-02-1', currentWorker: null, lastMovedAt: '2026-10-08T12:00:00' },
+      { plateId: 'PLT-4110-K', orderNo: '4110', branchNo: '01', color: 'K', colorHex: '#1E293B', status: 'IN_STORAGE', currentPalletId: 'B-02-1', currentWorker: null, lastMovedAt: '2026-10-08T12:00:00' },
+      { plateId: 'PLT-4205-特色1', orderNo: '4205', branchNo: '02', color: '特色1', colorHex: '#D97706', status: 'IN_STORAGE', currentPalletId: 'B-02-1', currentWorker: null, lastMovedAt: '2026-10-08T12:30:00' },
+      { plateId: 'PLT-4205-特色2', orderNo: '4205', branchNo: '02', color: '特色2', colorHex: '#64748B', status: 'IN_STORAGE', currentPalletId: 'B-02-1', currentWorker: null, lastMovedAt: '2026-10-08T12:30:00' },
+
+      // パレット B-06-2 に #5200 (保管中)
+      { plateId: 'PLT-5200-C', orderNo: '5200', branchNo: '01', color: 'C', colorHex: '#00A3E0', status: 'IN_STORAGE', currentPalletId: 'B-06-2', currentWorker: null, lastMovedAt: '2026-10-08T13:20:00' },
+      { plateId: 'PLT-5200-K', orderNo: '5200', branchNo: '01', color: 'K', colorHex: '#1E293B', status: 'IN_STORAGE', currentPalletId: 'B-06-2', currentWorker: null, lastMovedAt: '2026-10-08T13:20:00' },
+
+      // 使用中（作業中）の版: #1088 (佐藤 健一 が作業中)
+      { plateId: 'PLT-1088-C', orderNo: '1088', branchNo: '01', color: 'C', colorHex: '#00A3E0', status: 'IN_USE', currentPalletId: null, currentWorker: '佐藤 健一', lastMovedAt: '2026-10-08T14:10:00' },
+      { plateId: 'PLT-1088-M', orderNo: '1088', branchNo: '01', color: 'M', colorHex: '#E6007E', status: 'IN_USE', currentPalletId: null, currentWorker: '佐藤 健一', lastMovedAt: '2026-10-08T14:10:00' },
+      { plateId: 'PLT-1088-Y', orderNo: '1088', branchNo: '01', color: 'Y', colorHex: '#FACC15', status: 'IN_USE', currentPalletId: null, currentWorker: '佐藤 健一', lastMovedAt: '2026-10-08T14:10:00' },
+      
+      // 使用中（作業中）の版: #9012 (鈴木 大輔 が作業中)
+      { plateId: 'PLT-9012-K', orderNo: '9012', branchNo: '02', color: 'K', colorHex: '#1E293B', status: 'IN_USE', currentPalletId: null, currentWorker: '鈴木 大輔', lastMovedAt: '2026-10-08T15:00:00' }
+    ];
+
+    const INITIAL_LOGS = [
+      { id: 'LOG-001', timestamp: '2026-10-08 09:30', orderNo: '1042', plateId: 'PLT-1042 (4版)', color: 'C,M,Y,K', action: 'CHECK_IN', palletId: 'A-01-1', worker: '佐藤 健一' },
+      { id: 'LOG-002', timestamp: '2026-10-08 10:00', orderNo: '1099', plateId: 'PLT-1099-K (1版追加保管)', color: 'K', action: 'CHECK_IN', palletId: 'A-01-1', worker: '高橋 涼介' },
+      { id: 'LOG-003', timestamp: '2026-10-08 10:15', orderNo: '2088', plateId: 'PLT-2088 (3版)', color: 'C,M,特色1', action: 'CHECK_IN', palletId: 'A-03-2', worker: '鈴木 大輔' },
+      { id: 'LOG-004', timestamp: '2026-10-08 14:10', orderNo: '1088', plateId: 'PLT-1088 (3版)', color: 'C,M,Y', action: 'CHECK_OUT', palletId: 'A-02-1', worker: '佐藤 健一' },
+      { id: 'LOG-005', timestamp: '2026-10-08 15:00', orderNo: '9012', plateId: 'PLT-9012-K', color: 'K', action: 'CHECK_OUT', palletId: 'B-04-2', worker: '鈴木 大輔' },
+    ];
+
+    // --- メインコンポーネント ---
+    function App() {
+      // 状態管理
+      const [plates, setPlates] = useState(() => {
+        const saved = localStorage.getItem('pw_plates_multi_v1');
+        return saved ? JSON.parse(saved) : INITIAL_PLATES;
+      });
+
+      const [logs, setLogs] = useState(() => {
+        const saved = localStorage.getItem('pw_logs_multi_v1');
+        return saved ? JSON.parse(saved) : INITIAL_LOGS;
+      });
+
+      const [searchQuery, setSearchQuery] = useState('');
+      const [currentView, setCurrentView] = useState('MAP'); // 'MAP' | 'SEARCH'
+      const [orderToCheckOut, setOrderToCheckOut] = useState(null); // 検索結果画面からの出庫用受注データ
+      const [selectedPallet, setSelectedPallet] = useState(null);
+      const [showActionModal, setShowActionModal] = useState(false);
+      const [showHistoryModal, setShowHistoryModal] = useState(false);
+      const [showQuickReturnModal, setShowQuickReturnModal] = useState(false);
+      const [quickReturnOrderNo, setQuickReturnOrderNo] = useState(null);
+
+      // トースト通知
+      const [toastMsg, setToastMsg] = useState(null);
+      const showToast = (msg) => {
+        setToastMsg(msg);
+        setTimeout(() => setToastMsg(null), 3500);
+      };
+
+      // LocalStorage同期
+      useEffect(() => {
+        localStorage.setItem('pw_plates_multi_v1', JSON.stringify(plates));
+      }, [plates]);
+
+      useEffect(() => {
+        localStorage.setItem('pw_logs_multi_v1', JSON.stringify(logs));
+      }, [logs]);
+
+      // アイコンの初期化
+      useEffect(() => {
+        if (window.lucide) {
+          window.lucide.createIcons();
+        }
+      });
+
+      // パレットごとの版集約マップ
+      const palletPlatesMap = useMemo(() => {
+        const map = {};
+        ALL_PALLETS.forEach(p => { map[p.id] = []; });
+        plates.forEach(pl => {
+          if (pl.status === 'IN_STORAGE' && pl.currentPalletId) {
+            if (!map[pl.currentPalletId]) map[pl.currentPalletId] = [];
+            map[pl.currentPalletId].push(pl);
+          }
+        });
+        return map;
+      }, [plates]);
+
+      // 使用中の版一覧
+      const inUsePlates = useMemo(() => {
+        return plates.filter(p => p.status === 'IN_USE');
+      }, [plates]);
+
+      // 使用中の版を受注番号ごとにグループ化
+      const inUseByOrder = useMemo(() => {
+        const groups = {};
+        inUsePlates.forEach(p => {
+          if (!groups[p.orderNo]) {
+            groups[p.orderNo] = {
+              orderNo: p.orderNo,
+              branchNo: p.branchNo,
+              worker: p.currentWorker,
+              lastMovedAt: p.lastMovedAt,
+              plates: []
+            };
+          }
+          groups[p.orderNo].plates.push(p);
+        });
+        return Object.values(groups);
+      }, [inUsePlates]);
+
+      // 検索にマッチする受注グループリスト（部分一致・途中番号OK・複数検出対応）
+      const searchResultOrders = useMemo(() => {
+        const q = searchQuery.trim().toLowerCase();
+        // クエリがある場合は受注番号・色・枝番の部分一致、空なら全受注
+        const matched = q
+          ? plates.filter(p => 
+              p.orderNo.toLowerCase().includes(q) || 
+              p.color.toLowerCase().includes(q) ||
+              (p.branchNo && p.branchNo.toLowerCase().includes(q))
+            )
+          : plates;
+
+        const map = {};
+        matched.forEach(p => {
+          if (!map[p.orderNo]) {
+            map[p.orderNo] = {
+              orderNo: p.orderNo,
+              branchNo: p.branchNo,
+              plates: []
+            };
+          }
+          map[p.orderNo].plates.push(p);
+        });
+        return Object.values(map);
+      }, [plates, searchQuery]);
+
+      // 検索にマッチするパレットIDセット (マップ上のハイライト用)
+      const matchedPalletIds = useMemo(() => {
+        if (!searchQuery.trim()) return new Set();
+        const q = searchQuery.trim().toLowerCase();
+        const set = new Set();
+
+        ALL_PALLETS.forEach(p => {
+          if (p.id.toLowerCase().includes(q)) {
+            set.add(p.id);
+            return;
+          }
+          const stored = palletPlatesMap[p.id] || [];
+          const hit = stored.some(pl => 
+            pl.orderNo.toLowerCase().includes(q) ||
+            pl.color.toLowerCase().includes(q) ||
+            (pl.branchNo && pl.branchNo.includes(q))
+          );
+          if (hit) set.add(p.id);
+        });
+        return set;
+      }, [searchQuery, palletPlatesMap]);
+
+      // 統計情報
+      const stats = useMemo(() => {
+        let occupied = 0;
+        ALL_PALLETS.forEach(p => {
+          if (palletPlatesMap[p.id]?.length > 0) occupied++;
+        });
+        const total = ALL_PALLETS.length;
+        const empty = total - occupied;
+        const inUseCount = inUsePlates.length;
+        return { total, occupied, empty, inUseCount };
+      }, [palletPlatesMap, inUsePlates]);
+
+      // 検索実行（Enterまたは検索ボタン押下時 ➔ 検索結果ページへ遷移）
+      const handleSearchSubmit = (e) => {
+        if (e) e.preventDefault();
+        setCurrentView('SEARCH');
+      };
+
+      // パレットクリック時
+      const handlePalletClick = (pallet) => {
+        setSelectedPallet(pallet);
+        setShowActionModal(true);
+      };
+
+      // 検索画面からマップへジャンプ
+      const handleViewOnMap = (orderGroup) => {
+        setSearchQuery(orderGroup.orderNo);
+        setCurrentView('MAP');
+        const storedPlates = orderGroup.plates.filter(p => p.status === 'IN_STORAGE');
+        if (storedPlates.length > 0) {
+          const palletId = storedPlates[0].currentPalletId;
+          showToast(`📍 受注 #${orderGroup.orderNo} はパレット【${palletId}】に保管されています`);
+        } else {
+          showToast(`ℹ️ 受注 #${orderGroup.orderNo} は現在すべて使用中（現場作業中）です`);
+        }
+      };
+
+      // 検索画面からの出庫実行
+      const handleExecuteOrderCheckOut = (selectedPlateIds, worker) => {
+        if (!orderToCheckOut) return;
+        const now = new Date().toISOString();
+        const nowFormatted = new Date().toLocaleString('ja-JP', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
+        
+        const checkedOutPlates = plates.filter(p => selectedPlateIds.includes(p.plateId));
+        const originPalletId = checkedOutPlates[0]?.currentPalletId || '倉庫';
+
+        setPlates(prev => prev.map(p => {
+          if (selectedPlateIds.includes(p.plateId)) {
+            return {
+              ...p,
+              status: 'IN_USE',
+              currentPalletId: null,
+              currentWorker: worker,
+              lastMovedAt: now
+            };
+          }
+          return p;
+        }));
+
+        const newLog = {
+          id: `LOG-${Date.now().toString().slice(-6)}`,
+          timestamp: nowFormatted,
+          orderNo: orderToCheckOut.orderNo,
+          plateId: `${checkedOutPlates.length}版出庫`,
+          color: checkedOutPlates.map(p => p.color).join(','),
+          action: 'CHECK_OUT',
+          palletId: originPalletId,
+          worker: worker
+        };
+        setLogs(prev => [newLog, ...prev]);
+
+        const targetOrderNo = orderToCheckOut.orderNo;
+        setOrderToCheckOut(null);
+        showToast(`🚀 受注 #${targetOrderNo} から ${checkedOutPlates.length}版 を出庫しました！（作業者: ${worker}）`);
+      };
+
+      // クイック返却のパレット選択
+      const handleSelectPalletForQuickReturn = (targetPalletId, workerName) => {
+        if (!quickReturnOrderNo) return;
+        const platesToReturn = inUsePlates.filter(p => p.orderNo === quickReturnOrderNo);
+        if (platesToReturn.length === 0) return;
+
+        const now = new Date().toISOString();
+        const nowFormatted = new Date().toLocaleString('ja-JP', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
+
+        setPlates(prev => prev.map(p => {
+          if (p.orderNo === quickReturnOrderNo && p.status === 'IN_USE') {
+            return {
+              ...p,
+              status: 'IN_STORAGE',
+              currentPalletId: targetPalletId,
+              currentWorker: null,
+              lastMovedAt: now
+            };
+          }
+          return p;
+        }));
+
+        const newLog = {
+          id: `LOG-${Date.now().toString().slice(-6)}`,
+          timestamp: nowFormatted,
+          orderNo: quickReturnOrderNo,
+          plateId: `${platesToReturn.length}版一括`,
+          color: platesToReturn.map(p => p.color).join(','),
+          action: 'CHECK_IN',
+          palletId: targetPalletId,
+          worker: workerName || '担当作業者'
+        };
+        setLogs(prev => [newLog, ...prev]);
+
+        setShowQuickReturnModal(false);
+        setQuickReturnOrderNo(null);
+        showToast(`✅ 受注 #${quickReturnOrderNo} をパレット【${targetPalletId}】に返却入庫しました！`);
+      };
+
+      // サンプルデータ再リセット
+      const handleResetData = () => {
+        if (confirm('初期サンプルデータにリセットしますか？現在の入出庫状態は初期化されます。')) {
+          setPlates(INITIAL_PLATES);
+          setLogs(INITIAL_LOGS);
+          showToast('🔄 サンプルデータを再読み込みしました。');
+        }
+      };
+
+      return (
+        <div class="min-h-screen flex flex-col bg-slate-100 text-slate-800">
+          
+          {/* ================= ヘッダー（白基調・シャープで清潔感あるデザイン） ================= */}
+          <header class="sticky top-0 z-40 bg-white/95 backdrop-blur-md border-b border-slate-200 shadow-sm">
+            <div class="max-w-7xl mx-auto px-4 py-3 sm:px-6 flex flex-col md:flex-row md:items-center justify-between gap-3">
+              <div class="flex items-center gap-3">
+                <div class="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-600 to-indigo-600 flex items-center justify-center text-white shadow-md shadow-blue-500/20">
+                  <i data-lucide="layers" class="w-6 h-6"></i>
+                </div>
+                <div>
+                  <div class="flex items-center gap-2">
+                    <h1 class="text-lg sm:text-xl font-bold tracking-tight text-slate-900 flex items-center gap-2">
+                      印刷版 倉庫パレット管理
+                    </h1>
+                    <span class="text-xs px-2 py-0.5 rounded-full font-mono bg-blue-50 text-blue-700 font-semibold border border-blue-200">
+                      現場システム
+                    </span>
+                  </div>
+                  <p class="text-xs text-slate-500">
+                    2Dパレットマップ直列グリッド ＆ 受注検索・大型入出庫アクション
+                  </p>
+                </div>
+              </div>
+
+              {/* 検索バー ＆ ナビゲーション・操作ボタングループ */}
+              <div class="flex items-center gap-2 flex-wrap sm:flex-nowrap">
+                {/* 検索フォーム (Enter押下または検索ボタンで検索結果ページへ遷移) */}
+                <form onSubmit={handleSearchSubmit} class="flex items-center gap-1.5 flex-1 sm:w-80">
+                  <div class="relative flex-1">
+                    <i data-lucide="search" class="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"></i>
+                    <input
+                      type="text"
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                      placeholder="受注番号 (途中でも可: 例 10, 1042)..."
+                      class="w-full bg-slate-50 border border-slate-300 rounded-lg pl-9 pr-8 py-2 text-xs sm:text-sm text-slate-900 placeholder-slate-400 focus:outline-none focus:bg-white focus:border-blue-500 focus:ring-2 focus:ring-blue-100 transition-all font-mono"
+                    />
+                    {searchQuery && (
+                      <button 
+                        type="button"
+                        onClick={() => {
+                          setSearchQuery('');
+                          if (currentView === 'SEARCH') setCurrentView('MAP');
+                        }}
+                        class="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 text-xs font-bold"
+                      >
+                        ✕
+                      </button>
+                    )}
+                  </div>
+                  <button
+                    type="submit"
+                    class="px-3.5 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white font-bold text-xs flex items-center gap-1 shadow-sm transition-colors whitespace-nowrap"
+                  >
+                    <i data-lucide="arrow-right" class="w-3.5 h-3.5"></i>
+                    <span>検索</span>
+                  </button>
+                </form>
+
+                {/* 画面切り替えボタン（マップ ⇔ 検索結果） */}
+                {currentView === 'SEARCH' ? (
+                  <button
+                    onClick={() => setCurrentView('MAP')}
+                    class="px-3 py-2 rounded-lg bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 text-indigo-700 font-bold text-xs flex items-center gap-1.5 transition-colors shadow-sm"
+                  >
+                    <i data-lucide="map" class="w-4 h-4"></i>
+                    <span>全体図に戻る</span>
+                  </button>
+                ) : (
+                  <button
+                    onClick={() => setCurrentView('SEARCH')}
+                    class="px-3 py-2 rounded-lg bg-white hover:bg-slate-50 border border-slate-300 text-slate-700 hover:text-slate-900 text-xs font-semibold flex items-center gap-1.5 transition-colors shadow-sm"
+                  >
+                    <i data-lucide="list" class="w-4 h-4 text-blue-600"></i>
+                    <span class="hidden sm:inline">受注一覧</span>
+                  </button>
+                )}
+
+                {/* 履歴ボタン */}
+                <button
+                  onClick={() => setShowHistoryModal(true)}
+                  class="px-3 py-2 rounded-lg bg-white hover:bg-slate-50 border border-slate-300 text-slate-700 hover:text-slate-900 text-xs font-semibold flex items-center gap-1.5 transition-colors shadow-sm"
+                >
+                  <i data-lucide="history" class="w-4 h-4 text-blue-600"></i>
+                  <span class="hidden sm:inline">履歴</span>
+                </button>
+
+                {/* データリセット */}
+                <button
+                  onClick={handleResetData}
+                  title="初期サンプルデータにリセット"
+                  class="p-2 rounded-lg bg-white hover:bg-slate-50 border border-slate-300 text-slate-500 hover:text-slate-700 text-xs transition-colors shadow-sm"
+                >
+                  <i data-lucide="rotate-ccw" class="w-4 h-4"></i>
+                </button>
+              </div>
+            </div>
+
+            {/* サマリー統計バッジバー */}
+            <div class="bg-slate-50/90 border-t border-slate-200/80 px-4 py-2 sm:px-6">
+              <div class="max-w-7xl mx-auto flex items-center justify-between text-xs gap-4 overflow-x-auto pb-0.5">
+                <div class="flex items-center gap-4 sm:gap-6">
+                  <div class="flex items-center gap-1.5 text-slate-600">
+                    <span class="w-2.5 h-2.5 rounded-full bg-slate-400"></span>
+                    <span>総パレット:</span>
+                    <strong class="text-slate-900 font-mono text-sm">{stats.total}</strong>
+                  </div>
+                  <div class="flex items-center gap-1.5 text-blue-700">
+                    <span class="w-2.5 h-2.5 rounded-full bg-blue-600"></span>
+                    <span>保管中:</span>
+                    <strong class="text-blue-900 font-mono text-sm">{stats.occupied}</strong>
+                  </div>
+                  <div class="flex items-center gap-1.5 text-slate-600">
+                    <span class="w-2.5 h-2.5 rounded-full bg-white border-2 border-dashed border-slate-400"></span>
+                    <span>空き枠:</span>
+                    <strong class="text-slate-800 font-mono text-sm">{stats.empty}</strong>
+                  </div>
+                  <div class="flex items-center gap-1.5 text-amber-700">
+                    <span class="w-2.5 h-2.5 rounded-full bg-amber-500 animate-pulse"></span>
+                    <span>現在使用中:</span>
+                    <strong class="text-amber-900 font-mono text-sm">{stats.inUseCount} 版</strong>
+                  </div>
+                </div>
+
+                {searchQuery && (
+                  <div class="flex items-center gap-2">
+                    <button
+                      onClick={() => setCurrentView('SEARCH')}
+                      class="text-xs text-blue-800 hover:text-blue-900 font-bold flex items-center gap-1.5 bg-blue-100/80 hover:bg-blue-200 px-3 py-1 rounded-md border border-blue-300 whitespace-nowrap shadow-sm transition-colors"
+                    >
+                      <i data-lucide="search" class="w-3.5 h-3.5 text-blue-600"></i>
+                      <span>受注検索結果一覧を見る (<strong>{searchResultOrders.length}</strong> 件ヒット) ➔</span>
+                    </button>
+                  </div>
+                )}
+              </div>
+            </div>
+          </header>
+
+          {/* ================= メインレイアウト ================= */}
+          {currentView === 'MAP' ? (
+            /* --- ① 2Dパレットマップ表示ビュー --- */
+            <main class="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6 grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+              
+              {/* --- 左〜中央: パレットマップ画面 (8カラム) --- */}
+              <div class="lg:col-span-8 flex flex-col gap-6">
+                
+                {/* マップ凡例・ガイド */}
+                <div class="bg-white border border-slate-200 rounded-xl p-3.5 flex flex-wrap items-center justify-between gap-3 text-xs shadow-sm">
+                  <div class="flex items-center gap-2 text-slate-700 font-bold">
+                    <i data-lucide="map" class="w-4 h-4 text-blue-600"></i>
+                    <span>パレット配置図（タップして出庫・入庫アクションを選択）</span>
+                  </div>
+                  <div class="flex items-center gap-4 text-slate-600">
+                    <div class="flex items-center gap-1.5">
+                      <div class="w-3.5 h-3.5 rounded border-2 border-dashed border-slate-300 bg-slate-50"></div>
+                      <span>空き</span>
+                    </div>
+                    <div class="flex items-center gap-1.5">
+                      <div class="w-3.5 h-3.5 rounded bg-blue-50 border border-blue-400"></div>
+                      <span>保管中</span>
+                    </div>
+                    <div class="flex items-center gap-1.5">
+                      <div class="w-3.5 h-3.5 rounded bg-yellow-100 border-2 border-yellow-500"></div>
+                      <span>検索該当</span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* 2D グリッドコンテナ（中央に通路なしの縦直列） */}
+                <div class="flex flex-col gap-8 bg-white border border-slate-200 rounded-2xl p-4 sm:p-6 shadow-sm">
+                  
+                  {/* 🔵 上段：エリアA (縦11行 × 横2列 = 22マス) */}
+                  <div>
+                    <div class="flex items-center justify-between mb-3 border-b border-slate-200 pb-2">
+                      <div class="flex items-center gap-2">
+                        <span class="w-3.5 h-3.5 rounded-full bg-blue-600 shadow-sm shadow-blue-500/30"></span>
+                        <h2 class="font-bold text-sm sm:text-base text-blue-900">
+                          【上段：エリア A】
+                        </h2>
+                        <span class="text-xs text-slate-500">
+                          縦11行 × 横2列（A-01-1 〜 A-11-2 / 計22マス）
+                        </span>
+                      </div>
+                      <span class="text-xs font-mono text-blue-700 font-bold bg-blue-50 px-2.5 py-1 rounded-md border border-blue-200">
+                        エリアA 保管: {ALL_PALLETS.filter(p => p.area === 'A' && palletPlatesMap[p.id]?.length > 0).length} / 22
+                      </span>
+                    </div>
+
+                    {/* 列ヘッダー (1列目 / 2列目) */}
+                    <div class="grid grid-cols-2 gap-3 mb-2 px-1 text-center font-mono text-xs text-slate-500 font-semibold">
+                      <div>1列目 (左列)</div>
+                      <div>2列目 (右列)</div>
+                    </div>
+
+                    {/* エリアA グリッド */}
+                    <div class="grid grid-cols-2 gap-3">
+                      {ALL_PALLETS.filter(p => p.area === 'A').map(pallet => (
+                        <PalletCell
+                          key={pallet.id}
+                          pallet={pallet}
+                          plates={palletPlatesMap[pallet.id] || []}
+                          isMatched={matchedPalletIds.has(pallet.id)}
+                          onClick={() => handlePalletClick(pallet)}
+                        />
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* 境界ディバイダー */}
+                  <div class="relative py-2 flex items-center justify-center">
+                    <div class="absolute inset-0 flex items-center">
+                      <div class="w-full border-t-2 border-dashed border-slate-300"></div>
+                    </div>
+                    <span class="relative bg-slate-100 px-4 py-1 text-xs text-slate-600 rounded-full border border-slate-300 font-mono font-medium flex items-center gap-1.5 shadow-sm">
+                      <i data-lucide="arrow-down" class="w-3.5 h-3.5 text-slate-500"></i>
+                      倉庫内フロア境界（エリアA ➔ エリアB）
+                      <i data-lucide="arrow-down" class="w-3.5 h-3.5 text-slate-500"></i>
+                    </span>
+                  </div>
+
+                  {/* 🟢 下段：エリアB (縦12行 × 横2列 = 24マス) */}
+                  <div>
+                    <div class="flex items-center justify-between mb-3 border-b border-slate-200 pb-2">
+                      <div class="flex items-center gap-2">
+                        <span class="w-3.5 h-3.5 rounded-full bg-emerald-600 shadow-sm shadow-emerald-500/30"></span>
+                        <h2 class="font-bold text-sm sm:text-base text-emerald-900">
+                          【下段：エリア B】
+                        </h2>
+                        <span class="text-xs text-slate-500">
+                          縦12行 × 横2列（B-01-1 〜 B-12-2 / 計24マス）
+                        </span>
+                      </div>
+                      <span class="text-xs font-mono text-emerald-700 font-bold bg-emerald-50 px-2.5 py-1 rounded-md border border-emerald-200">
+                        エリアB 保管: {ALL_PALLETS.filter(p => p.area === 'B' && palletPlatesMap[p.id]?.length > 0).length} / 24
+                      </span>
+                    </div>
+
+                    {/* 列ヘッダー */}
+                    <div class="grid grid-cols-2 gap-3 mb-2 px-1 text-center font-mono text-xs text-slate-500 font-semibold">
+                      <div>1列目 (左列)</div>
+                      <div>2列目 (右列)</div>
+                    </div>
+
+                    {/* エリアB グリッド */}
+                    <div class="grid grid-cols-2 gap-3">
+                      {ALL_PALLETS.filter(p => p.area === 'B').map(pallet => (
+                        <PalletCell
+                          key={pallet.id}
+                          pallet={pallet}
+                          plates={palletPlatesMap[pallet.id] || []}
+                          isMatched={matchedPalletIds.has(pallet.id)}
+                          onClick={() => handlePalletClick(pallet)}
+                        />
+                      ))}
+                    </div>
+                  </div>
+
+                </div>
+              </div>
+
+              {/* --- 右: 使用中の版一覧（常時可視化サイドパネル） (4カラム) --- */}
+              <div class="lg:col-span-4 sticky top-24 flex flex-col gap-4">
+                <div class="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden">
+                  {/* パネルヘッダー */}
+                  <div class="p-4 bg-gradient-to-r from-amber-50 to-orange-50 border-b border-slate-200 flex items-center justify-between">
+                    <div class="flex items-center gap-2">
+                      <div class="p-1.5 rounded-lg bg-amber-500/20 text-amber-700">
+                        <i data-lucide="clock" class="w-4 h-4"></i>
+                      </div>
+                      <div>
+                        <h3 class="font-bold text-sm text-slate-900 flex items-center gap-2">
+                          現在使用中の版一覧
+                          <span class="text-xs px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 font-mono font-bold border border-amber-300">
+                            {inUseByOrder.length} 件 / {inUsePlates.length} 版
+                          </span>
+                        </h3>
+                        <p class="text-[11px] text-slate-500">現場で印刷機にセット・作業中の版</p>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* リスト本文 */}
+                  <div class="p-3 max-h-[calc(100vh-280px)] overflow-y-auto space-y-3">
+                    {inUseByOrder.length === 0 ? (
+                      <div class="p-8 text-center text-slate-400 text-xs flex flex-col items-center justify-center gap-2">
+                        <i data-lucide="check-circle-2" class="w-8 h-8 text-slate-300 stroke-[1.5]"></i>
+                        <p>現在使用中（持ち出し中）の版はありません。<br/>すべての版がパレットに保管されています。</p>
+                      </div>
+                    ) : (
+                      inUseByOrder.map(group => (
+                        <div 
+                          key={group.orderNo}
+                          class="p-3.5 rounded-xl bg-slate-50 border border-slate-200 hover:border-slate-300 transition-all flex flex-col gap-2.5 shadow-sm"
+                        >
+                          <div class="flex items-start justify-between">
+                            <div>
+                              <div class="flex items-center gap-2">
+                                <span class="text-sm font-bold font-mono text-blue-700">
+                                  #{group.orderNo}
+                                </span>
+                                {group.branchNo && (
+                                  <span class="text-[10px] px-1.5 py-0.5 rounded bg-white text-slate-600 font-mono border border-slate-200">
+                                    枝:{group.branchNo}
+                                  </span>
+                                )}
+                              </div>
+                              <div class="text-[11px] text-slate-600 flex items-center gap-1.5 mt-0.5 font-medium">
+                                <i data-lucide="user" class="w-3.5 h-3.5 text-slate-400"></i>
+                                <span class="text-slate-800">{group.worker || '未記録'}</span>
+                              </div>
+                            </div>
+
+                            <div class="text-right">
+                              <span class="text-[10px] font-mono text-slate-500 bg-white px-2 py-0.5 rounded border border-slate-200">
+                                {new Date(group.lastMovedAt).toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' })} 出庫
+                              </span>
+                            </div>
+                          </div>
+
+                          {/* 色チップ一覧 */}
+                          <div class="flex items-center gap-1.5 flex-wrap">
+                            {group.plates.map(pl => (
+                              <span
+                                key={pl.plateId}
+                                style={{ 
+                                  backgroundColor: pl.colorHex, 
+                                  color: pl.color === 'Y' || pl.color === '白' ? '#0F172A' : '#FFFFFF',
+                                  border: pl.color === '白' ? '1px solid #CBD5E1' : 'none'
+                                }}
+                                class="text-[11px] font-bold px-2 py-0.5 rounded-md shadow-sm"
+                                title={`${pl.color}版`}
+                              >
+                                {pl.color}
+                              </span>
+                            ))}
+                          </div>
+
+                          {/* クイック返却ボタン */}
+                          <div class="pt-2 border-t border-slate-200 flex items-center justify-end">
+                            <button
+                              onClick={() => {
+                                setQuickReturnOrderNo(group.orderNo);
+                                setShowQuickReturnModal(true);
+                              }}
+                              class="w-full py-1.5 px-3 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors shadow-sm"
+                            >
+                              <i data-lucide="corner-down-left" class="w-3.5 h-3.5"></i>
+                              <span>返却先を選んで入庫</span>
+                            </button>
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+
+                {/* ヘルプガイド */}
+                <div class="bg-white border border-slate-200 rounded-xl p-3.5 text-xs text-slate-600 flex items-start gap-2.5 shadow-sm">
+                  <i data-lucide="info" class="w-4 h-4 text-blue-600 shrink-0 mt-0.5"></i>
+                  <div class="space-y-1">
+                    <p class="font-bold text-slate-800">操作ガイド:</p>
+                    <p>・<strong>保管中のパレット</strong>を押すと「出庫（作業開始）」できます。</p>
+                    <p>・<strong>空きのパレット</strong>を押すと「版の返却」または「新規登録」ができます。</p>
+                  </div>
+                </div>
+              </div>
+
+            </main>
+          ) : (
+            /* --- ② 検索結果一覧ビュー (受注詳細・状態一覧・大型入出庫ボタン) --- */
+            <SearchResultsView
+              searchQuery={searchQuery}
+              setSearchQuery={setSearchQuery}
+              orders={searchResultOrders}
+              onBackToMap={() => setCurrentView('MAP')}
+              onOpenCheckOut={(orderGroup) => setOrderToCheckOut(orderGroup)}
+              onOpenReturn={(orderGroup) => {
+                setQuickReturnOrderNo(orderGroup.orderNo);
+                setShowQuickReturnModal(true);
+              }}
+              onViewOnMap={handleViewOnMap}
+            />
+          )}
+
+          {/* ================= モーダル群 ================= */}
+
+          {/* ① パレットアクションモーダル */}
+          {showActionModal && selectedPallet && (
+            <PalletActionModal
+              pallet={selectedPallet}
+              storedPlates={palletPlatesMap[selectedPallet.id] || []}
+              inUsePlates={inUsePlates}
+              onClose={() => {
+                setShowActionModal(false);
+                setSelectedPallet(null);
+              }}
+              onCheckOut={(selectedPlateIds, worker) => {
+                const now = new Date().toISOString();
+                const nowFormatted = new Date().toLocaleString('ja-JP', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
+                
+                const checkedOutPlates = plates.filter(p => selectedPlateIds.includes(p.plateId));
+
+                setPlates(prev => prev.map(p => {
+                  if (selectedPlateIds.includes(p.plateId)) {
+                    return {
+                      ...p,
+                      status: 'IN_USE',
+                      currentPalletId: null,
+                      currentWorker: worker,
+                      lastMovedAt: now
+                    };
+                  }
+                  return p;
+                }));
+
+                const newLog = {
+                  id: `LOG-${Date.now().toString().slice(-6)}`,
+                  timestamp: nowFormatted,
+                  orderNo: checkedOutPlates[0]?.orderNo || '---',
+                  plateId: `${checkedOutPlates.length}版出庫`,
+                  color: checkedOutPlates.map(p => p.color).join(','),
+                  action: 'CHECK_OUT',
+                  palletId: selectedPallet.id,
+                  worker: worker
+                };
+                setLogs(prev => [newLog, ...prev]);
+
+                setShowActionModal(false);
+                setSelectedPallet(null);
+                showToast(`🚀 パレット【${selectedPallet.id}】から ${checkedOutPlates.length}版 を出庫（作業者: ${worker}）しました！`);
+              }}
+              onCheckInReturn={(selectedPlateIds, worker) => {
+                const now = new Date().toISOString();
+                const nowFormatted = new Date().toLocaleString('ja-JP', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
+                
+                const returningPlates = inUsePlates.filter(p => selectedPlateIds.includes(p.plateId));
+
+                setPlates(prev => prev.map(p => {
+                  if (selectedPlateIds.includes(p.plateId)) {
+                    return {
+                      ...p,
+                      status: 'IN_STORAGE',
+                      currentPalletId: selectedPallet.id,
+                      currentWorker: null,
+                      lastMovedAt: now
+                    };
+                  }
+                  return p;
+                }));
+
+                const newLog = {
+                  id: `LOG-${Date.now().toString().slice(-6)}`,
+                  timestamp: nowFormatted,
+                  orderNo: returningPlates[0]?.orderNo || '---',
+                  plateId: `${returningPlates.length}版返却`,
+                  color: returningPlates.map(p => p.color).join(','),
+                  action: 'CHECK_IN',
+                  palletId: selectedPallet.id,
+                  worker: worker
+                };
+                setLogs(prev => [newLog, ...prev]);
+
+                setShowActionModal(false);
+                setSelectedPallet(null);
+                showToast(`📦 パレット【${selectedPallet.id}】に ${returningPlates.length}版 を返却入庫（作業者: ${worker}）しました！`);
+              }}
+              onRegisterNew={(newPlates, worker) => {
+                const now = new Date().toISOString();
+                const nowFormatted = new Date().toLocaleString('ja-JP', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
+
+                setPlates(prev => [...prev, ...newPlates]);
+
+                const newLog = {
+                  id: `LOG-${Date.now().toString().slice(-6)}`,
+                  timestamp: nowFormatted,
+                  orderNo: newPlates[0]?.orderNo,
+                  plateId: `${newPlates.length}版新規`,
+                  color: newPlates.map(p => p.color).join(','),
+                  action: 'CHECK_IN',
+                  palletId: selectedPallet.id,
+                  worker: worker
+                };
+                setLogs(prev => [newLog, ...prev]);
+
+                setShowActionModal(false);
+                setSelectedPallet(null);
+                showToast(`✨ 新規受注 #${newPlates[0]?.orderNo} (${newPlates.length}版) をパレット【${selectedPallet.id}】に入庫登録しました！`);
+              }}
+            />
+          )}
+
+          {/* ② クイック返却先選択モーダル */}
+          {showQuickReturnModal && quickReturnOrderNo && (
+            <QuickReturnPalletModal
+              orderNo={quickReturnOrderNo}
+              inUsePlates={inUsePlates.filter(p => p.orderNo === quickReturnOrderNo)}
+              allPallets={ALL_PALLETS}
+              palletPlatesMap={palletPlatesMap}
+              onClose={() => {
+                setShowQuickReturnModal(false);
+                setQuickReturnOrderNo(null);
+              }}
+              onConfirm={handleSelectPalletForQuickReturn}
+            />
+          )}
+
+          {/* ③ 検索結果画面からの出庫モーダル */}
+          {orderToCheckOut && (
+            <OrderCheckOutModal
+              orderGroup={orderToCheckOut}
+              onClose={() => setOrderToCheckOut(null)}
+              onConfirm={handleExecuteOrderCheckOut}
+            />
+          )}
+
+          {/* ④ 入出庫履歴モーダル */}
+          {showHistoryModal && (
+            <HistoryModal
+              logs={logs}
+              onClose={() => setShowHistoryModal(false)}
+            />
+          )}
+
+          {/* トースト表示 */}
+          {toastMsg && (
+            <div class="fixed bottom-6 right-6 z-50 bg-slate-900 text-white px-4 py-3 rounded-xl shadow-xl text-sm flex items-center gap-2 border border-slate-700">
+              <i data-lucide="check-circle" class="w-5 h-5 text-emerald-400"></i>
+              <span>{toastMsg}</span>
+            </div>
+          )}
+
+        </div>
+      );
+    }
+
+    // --- パレットセル（単一マス目）コンポーネント ---
+    function PalletCell({ pallet, plates, isMatched, onClick }) {
+      const isOccupied = plates.length > 0;
+
+      // 受注番号ごとに版を集約
+      const orderGroups = useMemo(() => {
+        const map = {};
+        plates.forEach(pl => {
+          if (!map[pl.orderNo]) {
+            map[pl.orderNo] = {
+              orderNo: pl.orderNo,
+              branchNo: pl.branchNo,
+              plates: []
+            };
+          }
+          map[pl.orderNo].plates.push(pl);
+        });
+        return Object.values(map);
+      }, [plates]);
+
+      const isMultiOrder = orderGroups.length > 1;
+
+      return (
+        <div
+          onClick={onClick}
+          className={`
+            relative p-3 rounded-xl cursor-pointer transition-all duration-200 select-none
+            flex flex-col justify-between min-h-[102px]
+            ${isMatched ? 'highlight-pallet' : ''}
+            ${isOccupied 
+              ? (isMultiOrder 
+                  ? 'bg-gradient-to-br from-indigo-50/90 via-white to-blue-50 border-2 border-indigo-400 hover:border-indigo-600 hover:shadow-md' 
+                  : 'bg-gradient-to-br from-blue-50/90 via-white to-sky-50 border-2 border-blue-400 hover:border-blue-600 hover:shadow-md')
+              : 'bg-white/80 border-2 border-dashed border-slate-300 hover:border-blue-400 hover:bg-blue-50/30'}
+          `}
+        >
+          {/* 上部: パレットID & バッジ */}
+          <div class="flex items-center justify-between gap-1 mb-1.5">
+            <span class="font-mono text-xs font-bold text-slate-700 flex items-center gap-1.5">
+              <span class={`w-2 h-2 rounded-full ${pallet.area === 'A' ? 'bg-blue-600' : 'bg-emerald-600'}`}></span>
+              {pallet.label}
+            </span>
+
+            {isOccupied ? (
+              <div class="flex items-center gap-1">
+                {isMultiOrder && (
+                  <span class="text-[9px] font-bold px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-800 border border-indigo-200">
+                    {orderGroups.length}受注
+                  </span>
+                )}
+                <span class={`text-[10px] font-mono px-2 py-0.5 rounded-full font-bold border ${
+                  isMultiOrder 
+                    ? 'bg-purple-50 text-purple-800 border-purple-200' 
+                    : 'bg-blue-100 text-blue-800 border-blue-200'
+                }`}>
+                  計{plates.length}版
+                </span>
+              </div>
+            ) : (
+              <span class="text-[10px] text-slate-400 font-medium px-1.5 py-0.2 rounded border border-dashed border-slate-300">
+                空き
+              </span>
+            )}
+          </div>
+
+          {/* 中央〜下部: 受注番号 ＆ 各色の丸チップ一覧 */}
+          {isOccupied ? (
+            <div class="flex flex-col gap-1.5">
+              {orderGroups.map(grp => (
+                <div key={grp.orderNo} class="flex items-center justify-between gap-1.5 py-0.5 border-b border-slate-100 last:border-none">
+                  {/* 受注番号 */}
+                  <div class="flex items-baseline gap-1 min-w-0">
+                    <span class="text-[10px] text-slate-400 font-mono">#</span>
+                    <span class="text-xs sm:text-sm font-bold font-mono text-slate-900 tracking-tight truncate">
+                      {grp.orderNo}
+                    </span>
+                    {grp.branchNo && (
+                      <span class="text-[9px] text-slate-400 font-mono">
+                        -{grp.branchNo}
+                      </span>
+                    )}
+                  </div>
+
+                  {/* その受注に属する版のCMYK丸チップ */}
+                  <div class="flex items-center gap-1 shrink-0 flex-wrap justify-end">
+                    {grp.plates.map(pl => (
+                      <span
+                        key={pl.plateId}
+                        style={{ 
+                          backgroundColor: pl.colorHex, 
+                          color: pl.color === 'Y' || pl.color === '白' ? '#0F172A' : '#FFFFFF',
+                          border: pl.color === '白' ? '1px solid #94A3B8' : 'none'
+                        }}
+                        class="w-4 h-4 rounded-full flex items-center justify-center text-[9px] font-bold shadow-sm"
+                        title={`受注#${grp.orderNo}: ${pl.color}版`}
+                      >
+                        {pl.color.slice(0, 1)}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div class="flex items-center justify-center py-2 text-slate-400 text-xs font-medium">
+              <span>タップして入庫</span>
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    // --- パレットアクションモーダル（複数保管対応: 出庫 / 返却入庫 / 新規入庫） ---
+    function PalletActionModal({ pallet, storedPlates, inUsePlates, onClose, onCheckOut, onCheckInReturn, onRegisterNew }) {
+      const isOccupied = storedPlates.length > 0;
+      
+      // タブ切り替え: 'checkout' (出庫) | 'return' (返却・追加入庫) | 'new' (新規登録入庫)
+      const [activeTab, setActiveTab] = useState(() => isOccupied ? 'checkout' : 'return');
+
+      // 出庫用チェック
+      const [checkedOutPlates, setCheckedOutPlates] = useState(() => storedPlates.map(p => p.plateId));
+      
+      // 返却入庫用チェック
+      const [checkedReturnPlates, setCheckedReturnPlates] = useState([]);
+
+      // 新規登録用フォーム
+      const [newOrderNo, setNewOrderNo] = useState('');
+      const [newBranchNo, setNewBranchNo] = useState('01');
+      const [selectedColors, setSelectedColors] = useState(['C', 'M', 'Y', 'K']);
+
+      // 作業者名入力（必須）
+      const [workerName, setWorkerName] = useState(WORKER_PRESETS[0]);
+      const [customWorker, setCustomWorker] = useState('');
+      const [isCustomWorker, setIsCustomWorker] = useState(false);
+
+      const effectiveWorker = isCustomWorker ? customWorker.trim() : workerName;
+
+      // 保管中版を受注番号ごとに集約
+      const storedOrderGroups = useMemo(() => {
+        const map = {};
+        storedPlates.forEach(pl => {
+          if (!map[pl.orderNo]) {
+            map[pl.orderNo] = {
+              orderNo: pl.orderNo,
+              branchNo: pl.branchNo,
+              plates: []
+            };
+          }
+          map[pl.orderNo].plates.push(pl);
+        });
+        return Object.values(map);
+      }, [storedPlates]);
+
+      // 出庫用：個別チェック切り替え
+      const togglePlateCheck = (id) => {
+        setCheckedOutPlates(prev => 
+          prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]
+        );
+      };
+
+      // 出庫用：特定受注の版を一括選択/解除
+      const toggleOrderGroupCheck = (groupPlates) => {
+        const groupIds = groupPlates.map(p => p.plateId);
+        const allGroupChecked = groupIds.every(id => checkedOutPlates.includes(id));
+        if (allGroupChecked) {
+          setCheckedOutPlates(prev => prev.filter(id => !groupIds.includes(id)));
+        } else {
+          setCheckedOutPlates(prev => Array.from(new Set([...prev, ...groupIds])));
+        }
+      };
+
+      // 出庫用：パレット内全版一括選択/解除
+      const toggleAllCheckOut = () => {
+        if (checkedOutPlates.length === storedPlates.length) {
+          setCheckedOutPlates([]);
+        } else {
+          setCheckedOutPlates(storedPlates.map(p => p.plateId));
+        }
+      };
+
+      // 新規色選択切り替え
+      const toggleColorSelect = (code) => {
+        setSelectedColors(prev => 
+          prev.includes(code) ? prev.filter(c => c !== code) : [...prev, code]
+        );
+      };
+
+      // 出庫実行
+      const handleExecuteCheckOut = () => {
+        if (checkedOutPlates.length === 0) return alert('出庫する版を少なくとも1つ選択してください。');
+        if (!effectiveWorker) return alert('【必須】作業者名を入力または選択してください。');
+        onCheckOut(checkedOutPlates, effectiveWorker);
+      };
+
+      // 返却・追加入庫実行
+      const handleExecuteReturn = () => {
+        if (checkedReturnPlates.length === 0) return alert('このパレットに返却入庫する版を選択してください。');
+        if (!effectiveWorker) return alert('【必須】作業者名を入力または選択してください。');
+        onCheckInReturn(checkedReturnPlates, effectiveWorker);
+      };
+
+      // 新規版登録・入庫実行
+      const handleExecuteRegisterNew = () => {
+        if (!newOrderNo.trim()) return alert('【必須】受注番号を入力してください。');
+        if (selectedColors.length === 0) return alert('色を少なくとも1つ選択してください。');
+        if (!effectiveWorker) return alert('【必須】作業者名を入力または選択してください。');
+
+        const now = new Date().toISOString();
+        const createdPlates = selectedColors.map(colorCode => {
+          const preset = COLOR_PRESETS.find(c => c.code === colorCode) || { bg: '#8B5CF6' };
+          return {
+            plateId: `PLT-${newOrderNo.trim()}-${colorCode}-${Date.now().toString().slice(-4)}`,
+            orderNo: newOrderNo.trim(),
+            branchNo: newBranchNo.trim() || '01',
+            color: colorCode,
+            colorHex: preset.bg,
+            status: 'IN_STORAGE',
+            currentPalletId: pallet.id,
+            currentWorker: null,
+            lastMovedAt: now
+          };
+        });
+
+        onRegisterNew(createdPlates, effectiveWorker);
+      };
+
+      return (
+        <div class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-fadeIn">
+          <div class="bg-white border border-slate-200 rounded-2xl w-full max-w-lg shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+            
+            {/* モーダルヘッダー */}
+            <div class="p-4 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
+              <div class="flex items-center gap-2.5">
+                <div class="w-8 h-8 rounded-lg bg-blue-100 text-blue-700 flex items-center justify-center">
+                  <i data-lucide="layers" class="w-5 h-5"></i>
+                </div>
+                <div>
+                  <div class="flex items-center gap-2">
+                    <h3 class="font-bold text-base text-slate-900">パレット操作</h3>
+                    <span class="font-mono text-xs px-2.5 py-0.5 rounded bg-blue-50 text-blue-800 border border-blue-200 font-bold">
+                      {pallet.label}
+                    </span>
+                  </div>
+                  <p class="text-xs text-slate-500">
+                    現在の状態: {isOccupied ? `保管中 (${storedOrderGroups.length}受注 / 計${storedPlates.length}版)` : '空き（保管版なし）'}
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={onClose}
+                class="w-8 h-8 rounded-lg bg-white hover:bg-slate-200 text-slate-400 hover:text-slate-700 flex items-center justify-center text-sm transition-colors border border-slate-200"
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* アクション選択タブ（出庫 / 返却・追加入庫 / 新規登録入庫） */}
+            <div class="p-3 bg-slate-100/80 border-b border-slate-200">
+              <div class="grid grid-cols-3 gap-1 bg-white p-1 rounded-xl border border-slate-200 text-xs">
+                {/* タブ①: 出庫 */}
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('checkout')}
+                  className={`py-2 px-1 font-bold rounded-lg transition-all flex items-center justify-center gap-1.5 ${
+                    activeTab === 'checkout'
+                      ? 'bg-blue-600 text-white shadow-sm'
+                      : 'text-slate-600 hover:text-slate-900 hover:bg-slate-50'
+                  }`}
+                >
+                  <i data-lucide="log-out" class="w-3.5 h-3.5"></i>
+                  <span>出庫 {storedPlates.length > 0 ? `(${storedPlates.length})` : ''}</span>
+                </button>
+
+                {/* タブ②: 返却・追加入庫 */}
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('return')}
+                  className={`py-2 px-1 font-bold rounded-lg transition-all flex items-center justify-center gap-1.5 ${
+                    activeTab === 'return'
+                      ? 'bg-emerald-600 text-white shadow-sm'
+                      : 'text-slate-600 hover:text-slate-900 hover:bg-slate-50'
+                  }`}
+                >
+                  <i data-lucide="corner-down-left" class="w-3.5 h-3.5"></i>
+                  <span>返却・入庫</span>
+                </button>
+
+                {/* タブ③: 新規登録入庫 */}
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('new')}
+                  className={`py-2 px-1 font-bold rounded-lg transition-all flex items-center justify-center gap-1.5 ${
+                    activeTab === 'new'
+                      ? 'bg-indigo-600 text-white shadow-sm'
+                      : 'text-slate-600 hover:text-slate-900 hover:bg-slate-50'
+                  }`}
+                >
+                  <i data-lucide="plus-circle" class="w-3.5 h-3.5"></i>
+                  <span>新規版入庫</span>
+                </button>
+              </div>
+            </div>
+
+            {/* モーダル本文 */}
+            <div class="p-5 overflow-y-auto space-y-5">
+
+              {/* ================= 1. 出庫タブ ================= */}
+              {activeTab === 'checkout' && (
+                <div class="space-y-4">
+                  {storedPlates.length === 0 ? (
+                    <div class="p-8 text-center text-slate-400 text-xs border-2 border-dashed border-slate-200 rounded-xl space-y-2">
+                      <i data-lucide="box" class="w-8 h-8 text-slate-300 mx-auto stroke-[1.5]"></i>
+                      <p>現在このパレットに保管されている版はありません。</p>
+                      <button
+                        onClick={() => setActiveTab('return')}
+                        class="text-blue-600 font-bold hover:underline"
+                      >
+                        「返却・入庫」タブから版を入庫してください ➔
+                      </button>
+                    </div>
+                  ) : (
+                    <>
+                      {/* パレット内保管サマリー */}
+                      <div class="bg-blue-50/80 p-3.5 rounded-xl border border-blue-200 flex items-center justify-between">
+                        <div>
+                          <span class="text-xs text-blue-800 font-medium">保管中の受注・版数:</span>
+                          <div class="text-base font-bold font-mono text-blue-950">
+                            {storedOrderGroups.length} 件の受注 / 計 {storedPlates.length} 版
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={toggleAllCheckOut}
+                          class="text-xs text-blue-700 bg-white hover:bg-blue-50 border border-blue-300 px-2.5 py-1.5 rounded-lg font-bold shadow-sm"
+                        >
+                          {checkedOutPlates.length === storedPlates.length ? '全選択解除' : '全版を選択'}
+                        </button>
+                      </div>
+
+                      {/* 受注ごとにグループ化した版の選択リスト */}
+                      <div class="space-y-3">
+                        <label class="text-xs font-bold text-slate-700 block">
+                          出庫（作業開始）する版を選択してください:
+                        </label>
+
+                        {storedOrderGroups.map(grp => {
+                          const groupPlateIds = grp.plates.map(p => p.plateId);
+                          const isAllGroupChecked = groupPlateIds.every(id => checkedOutPlates.includes(id));
+                          const someGroupChecked = groupPlateIds.some(id => checkedOutPlates.includes(id));
+
+                          return (
+                            <div key={grp.orderNo} class="border border-slate-200 rounded-xl bg-slate-50/60 p-3 space-y-2">
+                              {/* 受注ヘッダー */}
+                              <div class="flex items-center justify-between border-b border-slate-200 pb-2">
+                                <div class="flex items-center gap-2">
+                                  <span class="text-sm font-bold font-mono text-slate-900">
+                                    受注 #{grp.orderNo}
+                                  </span>
+                                  {grp.branchNo && (
+                                    <span class="text-[10px] px-1.5 py-0.5 rounded bg-white text-slate-600 font-mono border border-slate-200">
+                                      枝:{grp.branchNo}
+                                    </span>
+                                  )}
+                                  <span class="text-xs text-slate-500 font-mono">
+                                    ({grp.plates.length}版保管)
+                                  </span>
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={() => toggleOrderGroupCheck(grp.plates)}
+                                  class="text-[11px] text-blue-600 hover:text-blue-800 font-bold"
+                                >
+                                  {isAllGroupChecked ? 'この受注を解除' : 'この受注を一括選択'}
+                                </button>
+                              </div>
+
+                              {/* 版チェックボックス一覧 */}
+                              <div class="grid grid-cols-2 gap-2 pt-1">
+                                {grp.plates.map(pl => {
+                                  const isChecked = checkedOutPlates.includes(pl.plateId);
+                                  return (
+                                    <div
+                                      key={pl.plateId}
+                                      onClick={() => togglePlateCheck(pl.plateId)}
+                                      className={`p-2 rounded-xl border-2 cursor-pointer transition-all flex items-center justify-between ${
+                                        isChecked
+                                          ? 'bg-blue-50 border-blue-500 shadow-sm'
+                                          : 'bg-white border-slate-200 opacity-60 hover:opacity-100'
+                                      }`}
+                                    >
+                                      <div class="flex items-center gap-2">
+                                        <span
+                                          style={{ 
+                                            backgroundColor: pl.colorHex, 
+                                            color: pl.color === 'Y' || pl.color === '白' ? '#0F172A' : '#FFFFFF',
+                                            border: pl.color === '白' ? '1px solid #94A3B8' : 'none'
+                                          }}
+                                          class="w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold shadow-sm"
+                                        >
+                                          {pl.color.slice(0, 1)}
+                                        </span>
+                                        <span class="text-xs font-bold text-slate-800">
+                                          {pl.color}版
+                                        </span>
+                                      </div>
+                                      <input
+                                        type="checkbox"
+                                        checked={isChecked}
+                                        onChange={() => {}}
+                                        class="rounded border-slate-300 text-blue-600 focus:ring-blue-500 pointer-events-none w-4 h-4"
+                                      />
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+
+                      {/* 作業者名入力（必須） */}
+                      <WorkerSelector
+                        workerName={workerName}
+                        setWorkerName={setWorkerName}
+                        customWorker={customWorker}
+                        setCustomWorker={setCustomWorker}
+                        isCustomWorker={isCustomWorker}
+                        setIsCustomWorker={setIsCustomWorker}
+                      />
+
+                      {/* 出庫実行ボタン */}
+                      <div class="pt-2">
+                        <button
+                          onClick={handleExecuteCheckOut}
+                          class="w-full py-3 px-4 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white font-bold text-sm shadow-md shadow-blue-500/25 flex items-center justify-center gap-2 transition-all"
+                        >
+                          <i data-lucide="log-out" class="w-4 h-4"></i>
+                          <span>選択した {checkedOutPlates.length}版 を出庫する（作業中に切り替え）</span>
+                        </button>
+                        <p class="text-[11px] text-slate-500 text-center mt-1.5">
+                          ※一部の版のみ出庫した場合、未選択の版は引き続きこのパレットに保管されます。
+                        </p>
+                      </div>
+                    </>
+                  )}
+                </div>
+              )}
+
+              {/* ================= 2. 返却・追加入庫タブ ================= */}
+              {activeTab === 'return' && (
+                <div class="space-y-4">
+                  {/* 合積み（複数保管）アナウンス */}
+                  {isOccupied && (
+                    <div class="p-3 rounded-xl bg-emerald-50 border border-emerald-200 text-xs text-emerald-900 flex items-start gap-2">
+                      <i data-lucide="info" class="w-4 h-4 text-emerald-600 shrink-0 mt-0.5"></i>
+                      <div>
+                        <strong>複数保管（合積み）入庫モード:</strong><br />
+                        このパレットには現在 <span class="font-bold">{storedPlates.length}版</span> が保管されています。ここに追加して保管できます。
+                      </div>
+                    </div>
+                  )}
+
+                  <label class="text-xs font-bold text-slate-700 block">
+                    返却する版を選択（このパレットに入庫保管）:
+                  </label>
+
+                  {inUsePlates.length === 0 ? (
+                    <div class="p-8 text-center text-slate-400 text-xs border-2 border-dashed border-slate-200 rounded-xl space-y-1">
+                      <i data-lucide="check-circle" class="w-7 h-7 text-slate-300 mx-auto"></i>
+                      <p>現在使用中の版はありません。<br/>新しい版を登録する場合は「新規版入庫」タブをお使いください。</p>
+                    </div>
+                  ) : (
+                    <div class="max-h-52 overflow-y-auto space-y-2 pr-1">
+                      {inUsePlates.map(pl => {
+                        const isChecked = checkedReturnPlates.includes(pl.plateId);
+                        return (
+                          <div
+                            key={pl.plateId}
+                            onClick={() => {
+                              setCheckedReturnPlates(prev => 
+                                prev.includes(pl.plateId) ? prev.filter(x => x !== pl.plateId) : [...prev, pl.plateId]
+                              );
+                            }}
+                            className={`p-2.5 rounded-xl border-2 cursor-pointer transition-all flex items-center justify-between ${
+                              isChecked 
+                                ? 'bg-emerald-50 border-emerald-500 shadow-sm' 
+                                : 'bg-slate-50 border-slate-200 opacity-70 hover:opacity-100'
+                            }`}
+                          >
+                            <div class="flex items-center gap-2.5">
+                              <span
+                                style={{ 
+                                  backgroundColor: pl.colorHex, 
+                                  color: pl.color === 'Y' || pl.color === '白' ? '#0F172A' : '#FFFFFF',
+                                  border: pl.color === '白' ? '1px solid #94A3B8' : 'none'
+                                }}
+                                class="w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold shadow-sm"
+                              >
+                                {pl.color}
+                              </span>
+                              <div>
+                                <div class="text-xs font-bold font-mono text-slate-900">
+                                  #{pl.orderNo} ({pl.color}版)
+                                </div>
+                                <div class="text-[10px] text-slate-500 font-medium">
+                                  作業中: {pl.currentWorker}
+                                </div>
+                              </div>
+                            </div>
+                            <input
+                              type="checkbox"
+                              checked={isChecked}
+                              onChange={() => {}}
+                              class="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 pointer-events-none w-4 h-4"
+                            />
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+
+                  {/* 作業者名入力 */}
+                  <WorkerSelector
+                    workerName={workerName}
+                    setWorkerName={setWorkerName}
+                    customWorker={customWorker}
+                    setCustomWorker={setCustomWorker}
+                    isCustomWorker={isCustomWorker}
+                    setIsCustomWorker={setIsCustomWorker}
+                  />
+
+                  <button
+                    onClick={handleExecuteReturn}
+                    disabled={inUsePlates.length === 0}
+                    class="w-full py-3 px-4 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 disabled:opacity-40 disabled:cursor-not-allowed text-white font-bold text-sm shadow-md shadow-emerald-500/20 flex items-center justify-center gap-2 transition-all"
+                  >
+                    <i data-lucide="check" class="w-4 h-4"></i>
+                    <span>選択した {checkedReturnPlates.length}版 をこのパレットに入庫</span>
+                  </button>
+                </div>
+              )}
+
+              {/* ================= 3. 新規版登録入庫タブ ================= */}
+              {activeTab === 'new' && (
+                <div class="space-y-4">
+                  {/* 合積み（複数保管）アナウンス */}
+                  {isOccupied && (
+                    <div class="p-3 rounded-xl bg-indigo-50 border border-indigo-200 text-xs text-indigo-900 flex items-start gap-2">
+                      <i data-lucide="plus-circle" class="w-4 h-4 text-indigo-600 shrink-0 mt-0.5"></i>
+                      <div>
+                        <strong>複数保管（合積み）登録モード:</strong><br />
+                        このパレットに新しい受注の版を追加登録して同居保管できます。
+                      </div>
+                    </div>
+                  )}
+
+                  <div class="grid grid-cols-3 gap-2">
+                    <div class="col-span-2">
+                      <label class="text-xs font-bold text-slate-700 block mb-1">
+                        受注番号 <span class="text-red-500">*</span>
+                      </label>
+                      <input
+                        type="text"
+                        value={newOrderNo}
+                        onChange={(e) => setNewOrderNo(e.target.value)}
+                        placeholder="例: 6024"
+                        class="w-full bg-slate-50 border border-slate-300 rounded-lg px-3 py-2 text-sm text-slate-900 font-mono focus:border-indigo-500 focus:bg-white focus:outline-none"
+                      />
+                    </div>
+                    <div>
+                      <label class="text-xs font-bold text-slate-700 block mb-1">
+                        枝番
+                      </label>
+                      <input
+                        type="text"
+                        value={newBranchNo}
+                        onChange={(e) => setNewBranchNo(e.target.value)}
+                        placeholder="01"
+                        class="w-full bg-slate-50 border border-slate-300 rounded-lg px-3 py-2 text-sm text-slate-900 font-mono focus:border-indigo-500 focus:bg-white focus:outline-none"
+                      />
+                    </div>
+                  </div>
+
+                  {/* 色プリセット選択 */}
+                  <div>
+                    <label class="text-xs font-bold text-slate-700 block mb-1.5">
+                      版の色を選択 <span class="text-red-500">*</span>:
+                    </label>
+                    <div class="grid grid-cols-4 gap-2">
+                      {COLOR_PRESETS.map(preset => {
+                        const isSelected = selectedColors.includes(preset.code);
+                        return (
+                          <button
+                            key={preset.code}
+                            type="button"
+                            onClick={() => toggleColorSelect(preset.code)}
+                            className={`p-2 rounded-lg border-2 text-xs font-bold flex items-center gap-1.5 transition-all ${
+                              isSelected
+                                ? 'bg-indigo-50 border-indigo-500 text-indigo-900 shadow-sm'
+                                : 'bg-white border-slate-200 text-slate-600 hover:border-slate-300'
+                            }`}
+                          >
+                            <span
+                              style={{ 
+                                backgroundColor: preset.bg,
+                                border: preset.code === '白' ? '1px solid #CBD5E1' : 'none'
+                              }}
+                              class="w-3.5 h-3.5 rounded-full shrink-0"
+                            ></span>
+                            <span class="truncate">{preset.code}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* 作業者名入力 */}
+                  <WorkerSelector
+                    workerName={workerName}
+                    setWorkerName={setWorkerName}
+                    customWorker={customWorker}
+                    setCustomWorker={setCustomWorker}
+                    isCustomWorker={isCustomWorker}
+                    setIsCustomWorker={setIsCustomWorker}
+                  />
+
+                  <button
+                    onClick={handleExecuteRegisterNew}
+                    class="w-full py-3 px-4 rounded-xl bg-gradient-to-r from-indigo-600 to-blue-600 hover:from-indigo-700 hover:to-blue-700 text-white font-bold text-sm shadow-md shadow-indigo-500/20 flex items-center justify-center gap-2 transition-all"
+                  >
+                    <i data-lucide="plus-circle" class="w-4 h-4"></i>
+                    <span>新規 {selectedColors.length}版 をこのパレットに入庫登録</span>
+                  </button>
+                </div>
+              )}
+
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // --- 作業者名選択・入力コンポーネント ---
+    function WorkerSelector({ workerName, setWorkerName, customWorker, setCustomWorker, isCustomWorker, setIsCustomWorker }) {
+      return (
+        <div class="bg-slate-50 p-3.5 rounded-xl border border-slate-200 space-y-2.5">
+          <label class="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+            <i data-lucide="user-check" class="w-4 h-4 text-blue-600"></i>
+            作業者名 <span class="text-red-500">*必須記録</span>:
+          </label>
+
+          {/* プリセットチップ */}
+          <div class="flex items-center gap-1.5 flex-wrap">
+            {WORKER_PRESETS.map(name => (
+              <button
+                key={name}
+                type="button"
+                onClick={() => {
+                  setWorkerName(name);
+                  setIsCustomWorker(false);
+                }}
+                className={`text-xs px-2.5 py-1.5 rounded-lg border font-semibold transition-all ${
+                  !isCustomWorker && workerName === name
+                    ? 'bg-blue-600 text-white border-blue-600 shadow-sm'
+                    : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-100 hover:border-slate-400'
+                }`}
+              >
+                {name}
+              </button>
+            ))}
+
+            <button
+              type="button"
+              onClick={() => setIsCustomWorker(true)}
+              className={`text-xs px-2.5 py-1.5 rounded-lg border font-semibold transition-all ${
+                isCustomWorker
+                  ? 'bg-blue-600 text-white border-blue-600 shadow-sm'
+                  : 'bg-white text-slate-600 border-slate-300 hover:bg-slate-100'
+              }`}
+            >
+              ＋ その他直接入力
+            </button>
+          </div>
+
+          {/* 直接入力フォーム */}
+          {isCustomWorker && (
+            <input
+              type="text"
+              value={customWorker}
+              onChange={(e) => setCustomWorker(e.target.value)}
+              placeholder="作業者名を入力してください..."
+              class="w-full bg-white border border-blue-400 rounded-lg px-3 py-2 text-xs text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-200 font-medium"
+            />
+          )}
+        </div>
+      );
+    }
+
+    // --- クイック返却先パレット選択モーダル（空きパレット＋保管中パレットへの合積みも可能） ---
+    function QuickReturnPalletModal({ orderNo, inUsePlates, allPallets, palletPlatesMap, onClose, onConfirm }) {
+      const [targetPalletId, setTargetPalletId] = useState('');
+      const [workerName, setWorkerName] = useState(inUsePlates[0]?.currentWorker || WORKER_PRESETS[0]);
+
+      return (
+        <div class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-fadeIn">
+          <div class="bg-white border border-slate-200 rounded-2xl w-full max-w-md shadow-2xl p-5 space-y-4">
+            <div class="flex items-center justify-between border-b border-slate-200 pb-3">
+              <div>
+                <h3 class="font-bold text-base text-slate-900 flex items-center gap-2">
+                  <span>返却先パレットを選択</span>
+                </h3>
+                <p class="text-xs text-slate-500">
+                  受注 <span class="font-mono text-blue-700 font-bold">#{orderNo}</span> ({inUsePlates.length}版)
+                </p>
+              </div>
+              <button onClick={onClose} class="text-slate-400 hover:text-slate-700 text-sm">✕</button>
+            </div>
+
+            {/* パレット選択セレクト */}
+            <div>
+              <label class="text-xs font-bold text-slate-700 block mb-1.5">
+                返却先パレット（空き枠または合積み枠） <span class="text-red-500">*</span>:
+              </label>
+              <select
+                value={targetPalletId}
+                onChange={(e) => setTargetPalletId(e.target.value)}
+                class="w-full bg-slate-50 border border-slate-300 rounded-xl p-2.5 text-sm font-mono text-slate-900 focus:border-blue-500 focus:bg-white focus:outline-none"
+              >
+                <option value="">-- 返却先パレットを選択してください --</option>
+                <optgroup label="【空きパレット】">
+                  {allPallets
+                    .filter(p => !palletPlatesMap[p.id] || palletPlatesMap[p.id].length === 0)
+                    .map(p => (
+                      <option key={p.id} value={p.id}>
+                        【空き】エリア{p.area} : {p.id}
+                      </option>
+                    ))}
+                </optgroup>
+                <optgroup label="【保管中パレット（合積み・追加保管）】">
+                  {allPallets
+                    .filter(p => palletPlatesMap[p.id] && palletPlatesMap[p.id].length > 0)
+                    .map(p => {
+                      const count = palletPlatesMap[p.id].length;
+                      const firstOrder = palletPlatesMap[p.id][0]?.orderNo;
+                      return (
+                        <option key={p.id} value={p.id}>
+                          【合積み可】エリア{p.area} : {p.id} (現在: #{firstOrder}等 {count}版 保管中)
+                        </option>
+                      );
+                    })}
+                </optgroup>
+              </select>
+            </div>
+
+            {/* 作業者名確認 */}
+            <div>
+              <label class="text-xs font-bold text-slate-700 block mb-1">
+                返却作業者名 <span class="text-red-500">*</span>:
+              </label>
+              <input
+                type="text"
+                value={workerName}
+                onChange={(e) => setWorkerName(e.target.value)}
+                class="w-full bg-slate-50 border border-slate-300 rounded-lg p-2 text-xs text-slate-900 font-medium focus:bg-white focus:border-blue-500 focus:outline-none"
+              />
+            </div>
+
+            <div class="flex items-center gap-2 pt-2">
+              <button
+                type="button"
+                onClick={onClose}
+                class="flex-1 py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold transition-colors border border-slate-200"
+              >
+                キャンセル
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  if (!targetPalletId) return alert('返却先パレットを選択してください。');
+                  if (!workerName.trim()) return alert('作業者名を入力してください。');
+                  onConfirm(targetPalletId, workerName.trim());
+                }}
+                disabled={!targetPalletId}
+                class="flex-1 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 disabled:opacity-40 text-white text-xs font-bold transition-colors shadow-md shadow-emerald-600/20"
+              >
+                このパレットに返却
+              </button>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // --- 検索結果一覧ビュー (受注詳細・状態一覧・大型入出庫アクション) ---
+    function SearchResultsView({ searchQuery, setSearchQuery, orders, onBackToMap, onOpenCheckOut, onOpenReturn, onViewOnMap }) {
+      return (
+        <div class="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6 space-y-6">
+          
+          {/* 画面トップバー */}
+          <div class="bg-white border border-slate-200 rounded-2xl p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4 shadow-sm">
+            <div class="flex items-center gap-3">
+              <button
+                onClick={onBackToMap}
+                class="py-2.5 px-4 rounded-xl bg-blue-50 hover:bg-blue-100 text-blue-700 font-bold text-xs sm:text-sm flex items-center gap-2 transition-all border border-blue-200 shadow-sm"
+              >
+                <i data-lucide="arrow-left" class="w-4 h-4"></i>
+                <span>全体パレット配置図に戻る</span>
+              </button>
+              <div>
+                <h2 class="text-base sm:text-lg font-bold text-slate-900 flex items-center gap-2">
+                  <span>受注番号 検索・状態一覧</span>
+                  <span class="text-xs px-2.5 py-0.5 rounded-full bg-blue-100 text-blue-800 font-mono font-bold">
+                    {orders.length} 件検出
+                  </span>
+                </h2>
+                <p class="text-xs text-slate-500">
+                  {searchQuery ? `検索キーワード: 「${searchQuery}」の部分一致（途中番号・複数ヒット対応）` : '現在登録されているすべての受注を表示中'}
+                </p>
+              </div>
+            </div>
+
+            {/* この画面でのインクリメンタル絞り込み */}
+            <div class="relative w-full sm:w-72">
+              <i data-lucide="search" class="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"></i>
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="受注番号で再絞り込み (例: 10)..."
+                class="w-full bg-slate-50 border border-slate-300 rounded-xl pl-9 pr-8 py-2 text-xs sm:text-sm text-slate-900 placeholder-slate-400 focus:outline-none focus:bg-white focus:border-blue-500 font-mono"
+              />
+              {searchQuery && (
+                <button
+                  onClick={() => setSearchQuery('')}
+                  class="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 font-bold text-xs"
+                >
+                  ✕
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* 検索結果カード一覧 */}
+          {orders.length === 0 ? (
+            <div class="bg-white border-2 border-dashed border-slate-300 rounded-2xl p-12 text-center text-slate-500 space-y-3 shadow-sm">
+              <i data-lucide="search-x" class="w-12 h-12 text-slate-300 mx-auto stroke-[1.5]"></i>
+              <h3 class="font-bold text-base text-slate-800">該当する受注が見つかりませんでした</h3>
+              <p class="text-xs text-slate-500 max-w-md mx-auto">
+                受注番号「{searchQuery}」に一致する版データはありません。<br/>
+                別の番号をお試しいただくか、全体配置図に戻って新規版の入庫登録を行ってください。
+              </p>
+              <div class="pt-2">
+                <button
+                  onClick={onBackToMap}
+                  class="px-5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs transition-colors shadow-sm"
+                >
+                  全体パレット配置図に戻る
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+              {orders.map(order => {
+                const storedPlates = order.plates.filter(p => p.status === 'IN_STORAGE');
+                const inUsePlates = order.plates.filter(p => p.status === 'IN_USE');
+                const totalCount = order.plates.length;
+                
+                // 保管場所パレット一覧
+                const palletIds = Array.from(new Set(storedPlates.map(p => p.currentPalletId).filter(Boolean)));
+
+                return (
+                  <div
+                    key={order.orderNo}
+                    class="bg-white border border-slate-200 hover:border-slate-300 rounded-2xl p-5 shadow-sm hover:shadow-md transition-all flex flex-col justify-between space-y-4"
+                  >
+                    {/* 1. 受注情報ヘッダー */}
+                    <div>
+                      <div class="flex items-start justify-between gap-3 border-b border-slate-100 pb-3">
+                        <div>
+                          <div class="flex items-center gap-2">
+                            <span class="text-2xl font-black font-mono tracking-tight text-slate-900">
+                              #{order.orderNo}
+                            </span>
+                            {order.branchNo && (
+                              <span class="text-xs px-2 py-0.5 rounded font-mono font-bold bg-slate-100 text-slate-700 border border-slate-200">
+                                枝番:{order.branchNo}
+                              </span>
+                            )}
+                          </div>
+                          <div class="text-xs text-slate-500 mt-1 flex items-center gap-2">
+                            <span>全 {totalCount} 版中:</span>
+                            <span className={`font-bold ${storedPlates.length > 0 ? 'text-blue-700' : 'text-slate-400'}`}>
+                              保管 {storedPlates.length} 版
+                            </span>
+                            <span>/</span>
+                            <span className={`font-bold ${inUsePlates.length > 0 ? 'text-amber-700' : 'text-slate-400'}`}>
+                              作業中 {inUsePlates.length} 版
+                            </span>
+                          </div>
+                        </div>
+
+                        {/* 総合状態バッジ */}
+                        <div class="text-right">
+                          {storedPlates.length === totalCount ? (
+                            <span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-blue-50 text-blue-700 border border-blue-200">
+                              <span class="w-2 h-2 rounded-full bg-blue-600"></span>
+                              全版 保管中
+                            </span>
+                          ) : inUsePlates.length === totalCount ? (
+                            <span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-amber-50 text-amber-700 border border-amber-200 animate-pulse">
+                              <span class="w-2 h-2 rounded-full bg-amber-500"></span>
+                              全版 作業中
+                            </span>
+                          ) : (
+                            <span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-purple-50 text-purple-700 border border-purple-200">
+                              <span class="w-2 h-2 rounded-full bg-purple-600"></span>
+                              一部作業中 ({inUsePlates.length}/{totalCount})
+                            </span>
+                          )}
+                          
+                          {palletIds.length > 0 && (
+                            <div class="text-xs font-mono text-blue-900 font-bold mt-1.5">
+                              保管:【{palletIds.join(', ')}】
+                            </div>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* 2. 各版の現在状態一覧（CMYK丸チップ＋現在位置＋作業者） */}
+                      <div class="mt-3.5 space-y-2">
+                        <div class="text-xs font-bold text-slate-700 mb-1 flex items-center justify-between">
+                          <span>各版のステータス内訳:</span>
+                          <span class="text-[11px] text-slate-400 font-normal">色 / 保管パレット / 作業者</span>
+                        </div>
+                        <div class="grid grid-cols-1 gap-2">
+                          {order.plates.map(pl => (
+                            <div
+                              key={pl.plateId}
+                              class="p-2.5 rounded-xl bg-slate-50 border border-slate-200/90 flex items-center justify-between text-xs"
+                            >
+                              <div class="flex items-center gap-2.5 min-w-0">
+                                <span
+                                  style={{ 
+                                    backgroundColor: pl.colorHex, 
+                                    color: pl.color === 'Y' || pl.color === '白' ? '#0F172A' : '#FFFFFF',
+                                    border: pl.color === '白' ? '1px solid #CBD5E1' : 'none'
+                                  }}
+                                  class="w-6 h-6 rounded-full flex items-center justify-center font-bold text-xs shadow-sm shrink-0"
+                                >
+                                  {pl.color.slice(0, 1)}
+                                </span>
+                                <div class="truncate">
+                                  <span class="font-bold text-slate-900 mr-2">{pl.color}版</span>
+                                  <span class="font-mono text-slate-600 text-[11px]">
+                                    {pl.status === 'IN_STORAGE' ? (
+                                      <span class="text-blue-700 font-semibold">
+                                        📍 パレット【{pl.currentPalletId}】に保管中
+                                      </span>
+                                    ) : (
+                                      <span class="text-amber-800 font-semibold">
+                                        🏭 作業中: {pl.currentWorker || '未記録'}
+                                      </span>
+                                    )}
+                                  </span>
+                                </div>
+                              </div>
+
+                              <div class="text-right shrink-0">
+                                <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
+                                  pl.status === 'IN_STORAGE' 
+                                    ? 'bg-blue-100 text-blue-800 border-blue-200' 
+                                    : 'bg-amber-100 text-amber-800 border-amber-200'
+                                }`}>
+                                  {pl.status === 'IN_STORAGE' ? '保管中' : '使用中'}
+                                </span>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* 3. 大型アクションボタングループ（大きく押しやすい設計） */}
+                    <div class="pt-2 border-t border-slate-100 flex flex-col gap-2.5">
+                      <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                        {/* 出庫ボタン（保管中版がある場合） */}
+                        {storedPlates.length > 0 && (
+                          <button
+                            type="button"
+                            onClick={() => onOpenCheckOut(order)}
+                            class="min-h-[50px] py-3 px-4 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 active:scale-[0.98] text-white font-bold text-sm shadow-md shadow-blue-500/20 flex items-center justify-center gap-2 transition-all cursor-pointer"
+                          >
+                            <i data-lucide="log-out" class="w-5 h-5"></i>
+                            <span>出庫する ({storedPlates.length}版)</span>
+                          </button>
+                        )}
+
+                        {/* 返却入庫ボタン（使用中版がある場合） */}
+                        {inUsePlates.length > 0 && (
+                          <button
+                            type="button"
+                            onClick={() => onOpenReturn(order)}
+                            className={`min-h-[50px] py-3 px-4 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 active:scale-[0.98] text-white font-bold text-sm shadow-md shadow-emerald-500/20 flex items-center justify-center gap-2 transition-all cursor-pointer ${
+                              storedPlates.length === 0 ? 'col-span-full' : ''
+                            }`}
+                          >
+                            <i data-lucide="corner-down-left" class="w-5 h-5"></i>
+                            <span>返却・入庫する ({inUsePlates.length}版)</span>
+                          </button>
+                        )}
+                      </div>
+
+                      {/* パレット位置確認ボタン */}
+                      {palletIds.length > 0 && (
+                        <button
+                          type="button"
+                          onClick={() => onViewOnMap(order)}
+                          class="w-full min-h-[40px] py-2 px-3 rounded-xl bg-slate-50 hover:bg-slate-100 text-slate-700 hover:text-slate-900 text-xs font-bold border border-slate-300 flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+                        >
+                          <i data-lucide="map-pin" class="w-4 h-4 text-blue-600"></i>
+                          <span>マップ全体図で位置を確認【{palletIds.join(', ')}】</span>
+                        </button>
+                      )}
+                    </div>
+
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+        </div>
+      );
+    }
+
+    // --- 検索結果画面用 出庫モーダルコンポーネント ---
+    function OrderCheckOutModal({ orderGroup, onClose, onConfirm }) {
+      const storedPlates = orderGroup.plates.filter(p => p.status === 'IN_STORAGE');
+      const [selectedIds, setSelectedIds] = useState(() => storedPlates.map(p => p.plateId));
+
+      const [workerName, setWorkerName] = useState(WORKER_PRESETS[0]);
+      const [customWorker, setCustomWorker] = useState('');
+      const [isCustomWorker, setIsCustomWorker] = useState(false);
+
+      const effectiveWorker = isCustomWorker ? customWorker.trim() : workerName;
+
+      const toggleSelect = (id) => {
+        setSelectedIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
+      };
+
+      const toggleAll = () => {
+        if (selectedIds.length === storedPlates.length) {
+          setSelectedIds([]);
+        } else {
+          setSelectedIds(storedPlates.map(p => p.plateId));
+        }
+      };
+
+      const handleExecute = () => {
+        if (selectedIds.length === 0) return alert('出庫する版を選択してください。');
+        if (!effectiveWorker) return alert('【必須】作業者名を入力または選択してください。');
+        onConfirm(selectedIds, effectiveWorker);
+      };
+
+      return (
+        <div class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-fadeIn">
+          <div class="bg-white border border-slate-200 rounded-2xl w-full max-w-md shadow-2xl p-5 space-y-4">
+            {/* ヘッダー */}
+            <div class="flex items-center justify-between border-b border-slate-200 pb-3">
+              <div>
+                <h3 class="font-bold text-base text-slate-900 flex items-center gap-2">
+                  <span>出庫（作業開始）</span>
+                  <span class="font-mono text-blue-700 font-bold">#{orderGroup.orderNo}</span>
+                </h3>
+                <p class="text-xs text-slate-500">出庫する版と作業者名を選択してください</p>
+              </div>
+              <button onClick={onClose} class="text-slate-400 hover:text-slate-700 text-sm">✕</button>
+            </div>
+
+            {/* 版選択 */}
+            <div>
+              <div class="flex items-center justify-between mb-2">
+                <label class="text-xs font-bold text-slate-700">出庫する版を選択:</label>
+                <button type="button" onClick={toggleAll} class="text-xs text-blue-600 font-bold">
+                  {selectedIds.length === storedPlates.length ? '全解除' : 'すべて選択'}
+                </button>
+              </div>
+              <div class="grid grid-cols-2 gap-2">
+                {storedPlates.map(pl => {
+                  const isChecked = selectedIds.includes(pl.plateId);
+                  return (
+                    <div
+                      key={pl.plateId}
+                      onClick={() => toggleSelect(pl.plateId)}
+                      className={`p-2.5 rounded-xl border-2 cursor-pointer transition-all flex items-center justify-between ${
+                        isChecked ? 'bg-blue-50 border-blue-500 shadow-sm' : 'bg-slate-50 border-slate-200 opacity-60'
+                      }`}
+                    >
+                      <div class="flex items-center gap-2">
+                        <span
+                          style={{ 
+                            backgroundColor: pl.colorHex, 
+                            color: pl.color === 'Y' || pl.color === '白' ? '#0F172A' : '#FFFFFF',
+                            border: pl.color === '白' ? '1px solid #94A3B8' : 'none'
+                          }}
+                          class="w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold"
+                        >
+                          {pl.color.slice(0, 1)}
+                        </span>
+                        <span class="text-xs font-bold text-slate-800">{pl.color}版</span>
+                      </div>
+                      <input type="checkbox" checked={isChecked} onChange={() => {}} class="rounded text-blue-600 pointer-events-none w-4 h-4" />
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* 作業者名選択 */}
+            <WorkerSelector
+              workerName={workerName}
+              setWorkerName={setWorkerName}
+              customWorker={customWorker}
+              setCustomWorker={setCustomWorker}
+              isCustomWorker={isCustomWorker}
+              setIsCustomWorker={setIsCustomWorker}
+            />
+
+            {/* 出庫実行ボタン（大型） */}
+            <div class="flex items-center gap-2 pt-2">
+              <button
+                type="button"
+                onClick={onClose}
+                class="flex-1 py-3 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold transition-colors"
+              >
+                キャンセル
+              </button>
+              <button
+                type="button"
+                onClick={handleExecute}
+                class="flex-2 py-3 px-5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs sm:text-sm font-bold shadow-md shadow-blue-500/20 transition-all"
+              >
+                {selectedIds.length}版 を出庫する
+              </button>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // --- 入出庫履歴モーダルコンポーネント ---
+    function HistoryModal({ logs, onClose }) {
+      const [filterOrder, setFilterOrder] = useState('');
+
+      const filteredLogs = useMemo(() => {
+        if (!filterOrder.trim()) return logs;
+        return logs.filter(l => 
+          l.orderNo.includes(filterOrder.trim()) ||
+          l.worker.includes(filterOrder.trim()) ||
+          l.palletId.includes(filterOrder.trim())
+        );
+      }, [logs, filterOrder]);
+
+      // CSVエクスポート
+      const handleExportCSV = () => {
+        const header = '日時,アクション,受注番号,パレット,版,作業者\n';
+        const rows = logs.map(l => 
+          `"${l.timestamp}","${l.action === 'CHECK_OUT' ? '出庫' : '入庫'}","${l.orderNo}","${l.palletId}","${l.plateId}","${l.worker}"`
+        ).join('\n');
+        
+        const bom = new Uint8Array([0xEF, 0xBB, 0xBF]);
+        const blob = new Blob([bom, header + rows], { type: 'text/csv;charset=utf-8;' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `印刷版_入出庫履歴_${new Date().toISOString().slice(0,10)}.csv`;
+        a.click();
+        URL.revokeObjectURL(url);
+      };
+
+      return (
+        <div class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-fadeIn">
+          <div class="bg-white border border-slate-200 rounded-2xl w-full max-w-2xl shadow-2xl flex flex-col max-h-[85vh] overflow-hidden">
+            {/* ヘッダー */}
+            <div class="p-4 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
+              <div class="flex items-center gap-2">
+                <i data-lucide="clipboard-list" class="w-5 h-5 text-blue-600"></i>
+                <h3 class="font-bold text-base text-slate-900">入出庫 履歴ログ</h3>
+                <span class="text-xs px-2.5 py-0.5 rounded-full bg-slate-200 text-slate-700 font-mono font-bold">
+                  全 {logs.length} 件
+                </span>
+              </div>
+              <div class="flex items-center gap-2">
+                <button
+                  onClick={handleExportCSV}
+                  class="px-3 py-1.5 rounded-lg bg-white hover:bg-slate-100 border border-slate-300 text-xs font-semibold text-slate-700 flex items-center gap-1 transition-colors shadow-sm"
+                >
+                  <i data-lucide="download" class="w-3.5 h-3.5 text-blue-600"></i>
+                  <span>CSV出力</span>
+                </button>
+                <button
+                  onClick={onClose}
+                  class="w-8 h-8 rounded-lg bg-white hover:bg-slate-100 text-slate-400 hover:text-slate-700 flex items-center justify-center text-sm border border-slate-200"
+                >
+                  ✕
+                </button>
+              </div>
+            </div>
+
+            {/* フィルター */}
+            <div class="p-3 bg-slate-50/80 border-b border-slate-200">
+              <input
+                type="text"
+                value={filterOrder}
+                onChange={(e) => setFilterOrder(e.target.value)}
+                placeholder="履歴内検索 (受注番号 / パレット / 作業者)..."
+                class="w-full bg-white border border-slate-300 rounded-lg px-3 py-2 text-xs text-slate-900 placeholder-slate-400 focus:outline-none focus:border-blue-500 font-mono"
+              />
+            </div>
+
+            {/* テーブル */}
+            <div class="p-4 overflow-y-auto flex-1 space-y-2">
+              {filteredLogs.length === 0 ? (
+                <div class="text-center py-10 text-slate-400 text-xs">
+                  該当する履歴はありません。
+                </div>
+              ) : (
+                filteredLogs.map(l => (
+                  <div 
+                    key={l.id}
+                    class="p-3 rounded-xl bg-slate-50/80 border border-slate-200 flex items-center justify-between text-xs gap-3 hover:bg-slate-100/70 transition-colors"
+                  >
+                    <div class="flex items-center gap-3">
+                      <span className={`px-2 py-1 rounded-md font-bold text-[10px] ${
+                        l.action === 'CHECK_OUT'
+                          ? 'bg-blue-100 text-blue-800 border border-blue-200'
+                          : 'bg-emerald-100 text-emerald-800 border border-emerald-200'
+                      }`}>
+                        {l.action === 'CHECK_OUT' ? '出庫' : '入庫'}
+                      </span>
+                      <div>
+                        <div class="flex items-center gap-2">
+                          <span class="font-mono font-bold text-slate-900">#{l.orderNo}</span>
+                          <span class="font-mono text-[11px] text-slate-600 bg-white px-1.5 py-0.5 rounded border border-slate-200">
+                            {l.palletId}
+                          </span>
+                          <span class="text-slate-700 font-medium">{l.color}</span>
+                        </div>
+                        <div class="text-[10px] text-slate-400 font-mono mt-0.5">
+                          {l.plateId}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div class="text-right">
+                      <div class="text-slate-800 font-semibold flex items-center justify-end gap-1">
+                        <i data-lucide="user" class="w-3.5 h-3.5 text-slate-400"></i>
+                        <span>{l.worker}</span>
+                      </div>
+                      <div class="text-[10px] text-slate-400 font-mono mt-0.5">
+                        {l.timestamp}
+                      </div>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // Reactアプリのマウント
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<App />);
+  </script>
+</body>
+</html>
